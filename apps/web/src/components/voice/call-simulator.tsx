@@ -56,7 +56,20 @@ class Pcm24k extends AudioWorkletProcessor {
 }
 registerProcessor('pcm24k', Pcm24k);`;
 
-export function CallSimulator({ voiceUrl, defaultLanguage, audioAvailable }: { voiceUrl: string; defaultLanguage: "ar" | "en" | "fr"; audioAvailable: boolean }) {
+export function CallSimulator({
+  voiceUrl,
+  defaultLanguage,
+  audioAvailable,
+  tokenAction = voiceTokenAction,
+  showCallerId = true,
+}: {
+  voiceUrl: string;
+  defaultLanguage: "ar" | "en" | "fr";
+  audioAvailable: boolean;
+  /** Mints the WebSocket token (dashboard: staff action; public demo: rate-limited demo action). */
+  tokenAction?: (input: { callerPhone?: string | null; mode: "text" | "audio" }) => Promise<{ ok: true; data: { token: string } } | { ok: false; error: string }>;
+  showCallerId?: boolean;
+}) {
   const { t } = useI18n();
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -221,7 +234,7 @@ export function CallSimulator({ voiceUrl, defaultLanguage, audioAvailable }: { v
     setTurns([]);
     setCallId(null);
     setS("connecting");
-    const res = await voiceTokenAction({ callerPhone: callerId || null, mode });
+    const res = await tokenAction({ callerPhone: callerId || null, mode });
     if (!res.ok) {
       setTurns([{ role: "system", text: res.error }]);
       return setS("idle");
@@ -327,9 +340,11 @@ export function CallSimulator({ voiceUrl, defaultLanguage, audioAvailable }: { v
             <option value="fr">Français</option>
           </Select>
         </Field>
-        <Field label={t("voice.callerId")} hint={t("voice.callerIdHint")}>
-          <Input value={callerId} onChange={(e) => setCallerId(e.target.value)} placeholder="+961 3 123 456" dir="ltr" disabled={live} />
-        </Field>
+        {showCallerId ? (
+          <Field label={t("voice.callerId")} hint={t("voice.callerIdHint")}>
+            <Input value={callerId} onChange={(e) => setCallerId(e.target.value)} placeholder="+961 3 123 456" dir="ltr" disabled={live} />
+          </Field>
+        ) : null}
         {!speechSupported && mode === "text" ? <p className="rounded-md bg-warning/15 p-2 text-xs">{t("voice.noSpeech")}</p> : null}
         {live ? (
           <Button variant="destructive" size="lg" onClick={hangup}>

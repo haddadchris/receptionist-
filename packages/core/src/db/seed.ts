@@ -12,7 +12,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { DateTime } from "luxon";
 import { closeDb } from "./client";
 import { withSystem, withTenant, type Tx } from "./tenant";
-import { appointments, businesses, calls, campaigns, conversations, customers, jobs, messages, notifications, payments, plans, resources, reviewRequests, services as servicesTable, subscriptions, usageEvents, users, type PlanTier } from "./schema";
+import { appointments, businesses, calls, campaigns, conversations, customers, jobs, leads, messages, notifications, payments, plans, resources, reviewRequests, services as servicesTable, subscriptions, usageEvents, users, type PlanTier } from "./schema";
 import { createUser, findUserByEmail } from "../auth/users";
 import {
   addHoliday,
@@ -622,6 +622,21 @@ async function seedBarber(ownerId: string) {
   return { businessId: id, skipped: false, appointments: n };
 }
 
+/** A small sales pipeline for the admin "Leads" board. */
+async function seedLeads() {
+  const [{ n } = { n: 0 }] = await withSystem((tx) => tx.select({ n: sql<number>`count(*)::int` }).from(leads));
+  if (n > 0) return;
+  const rows: (typeof leads.$inferInsert)[] = [
+    { name: "Dr. Joelle Abi Nader", businessName: "Smile Studio", phone: "+96170112233", vertical: "dental", city: "Jounieh", stage: "new", message: "We miss a lot of calls during surgery hours.\nInterested in: premium" },
+    { name: "Hadi Saab", businessName: "Hadi's Barbershop", phone: "+96171223344", vertical: "barber", city: "Hamra", stage: "new", message: "Mostly WhatsApp bookings." },
+    { name: "Dr. Karim Mansour", businessName: "Mansour Physio", phone: "+96176334455", vertical: "physio", city: "Zahle", stage: "demo_scheduled", notes: "[2026-11-02 10:00] Demo Thursday 4pm at the clinic" },
+    { name: "Rita Khalil", businessName: "Glow Aesthetics", phone: "+96178445566", vertical: "aesthetic", city: "Achrafieh", stage: "demo_done", notes: "[2026-10-28 15:30] Loved the voice demo, wants French too" },
+    { name: "Dr. Elie Haddad", businessName: "Haddad Dental", phone: "+96103556677", vertical: "dental", city: "Batroun", stage: "trial" },
+    { name: "Nadine Frem", businessName: "Salon Nadine", phone: "+96181667788", vertical: "salon", city: "Kaslik", stage: "paying" },
+  ];
+  await withSystem((tx) => tx.insert(leads).values(rows.map((r) => ({ ...r, source: "website" }))));
+}
+
 export async function seed(): Promise<void> {
   await seedPlans();
   await ensureUser(DEMO.adminEmail, DEMO.adminPassword, "Fekerte Admin", true);
@@ -629,6 +644,7 @@ export async function seed(): Promise<void> {
   const barberOwner = await ensureUser(DEMO.barberOwnerEmail, DEMO.ownerPassword, "Tony Barber");
   const dental = await seedDental(dentalOwner.id);
   const barber = await seedBarber(barberOwner.id);
+  await seedLeads();
   const [{ n } = { n: 0 }] = await withSystem((tx) => tx.select({ n: sql<number>`count(*)::int` }).from(users));
   console.log("✓ seed complete", { users: n, dental, barber });
 }

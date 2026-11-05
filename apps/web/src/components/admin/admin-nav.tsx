@@ -6,9 +6,10 @@ import { useT } from "@/i18n/client";
 import type { TKey } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-/** Admin sections; later phases append (leads). */
+/** Admin sections. */
 export const ADMIN_LINKS: { href: string; label: TKey }[] = [
   { href: "/admin", label: "admin.businesses" },
+  { href: "/admin/leads", label: "admin.leads" },
   { href: "/admin/invoices", label: "admin.invoices" },
   { href: "/admin/plans", label: "admin.plans" },
 ];

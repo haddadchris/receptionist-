@@ -11,8 +11,8 @@ _Last updated: Phase 3 complete._
 | 3 | Premium tier — AI voice receptionist (Lebanese Arabic) | ✅ Done |
 | 4 | Billing, plans, limits | ✅ Done |
 | 5 | Growth layer (CRM, deposits, reviews, recalls, analytics, campaigns) | ✅ Done |
-| 6 | Marketing site + sales tools | ⏳ Next |
-| 7 | Hardening + handoff | ⏳ |
+| 6 | Marketing site + sales tools | ✅ Done |
+| 7 | Hardening + handoff | ⏳ Next |
 
 ## Phase 1 — what's done
 
@@ -104,6 +104,14 @@ _Last updated: Phase 3 complete._
 - **Seed**: VIP tags, marketing consent, a $50 deposit on whitening, an appointment awaiting its deposit + one paid, 9 ratings incl. 2 private complaints, recalls, a sent + a draft campaign, WhatsApp conversations behind WhatsApp bookings, AI calls behind phone bookings, info-only chats and hang-ups; booking `created_at` spread realistically. Seeded history never triggers real sends on first `pnpm dev`.
 - **Tests**: core 134 (adds `test/db/growth.test.ts`, 14 tests: deposit hold → request message → paid/confirmed; expiry frees the slot; staff bookings skip deposits; waive; repeat no-show rule; AI tool says held-not-confirmed; rating parser; 4–5 → Google link; 1–3 → private feedback with AI paused; recall scheduling + skip when rebooked; campaign consent/once/STOP; Basic-tier "1"/"2" without AI; analytics; timeline). e2e 19 (adds `growth.spec.ts`: analytics, segments + timeline, campaign send through the worker, online deposit booking → staff marks received). E2E helper now logs in once per account (login is rate-limited per account). Evals still 46/46 (mock).
 
+## Phase 6 — what's done
+
+- **Marketing site at `/`** (Arabic default with RTL, English, French — locale from `?lang`, cookie, then Accept-Language): sticky header with mobile menu, hero with an illustrative WhatsApp conversation (labelled as an example), the problem (missed calls / late WhatsApp replies / no-shows — **no invented statistics**), **ROI calculator** (missed calls/day × % who would have booked × average value × working days → monthly and yearly estimate, and how many times it covers Premium; the assumptions are stated on the page), how it works (3 steps), features, **pricing from the `plans` table** (admin-editable, setup + monthly in USD, features per tier, "most popular"), FAQ (Lebanese Arabic understanding, keeping your number, what if the AI doesn't know, double-booking, data, payment methods, contract), **"Book a demo" form** → lead (rate-limited per IP, honeypot, phone normalized, repeats within 24 h merged; pricing cards pre-select the plan).
+- **Live demo `/demo`**: chat with the Demo Dental agent (same web-chat pipeline, per-IP limits) and a **browser call** (same call simulator, text mode with the browser's speech engines; tokens minted by a separate rate-limited action — 6 calls/hour/IP, 5-minute tokens, demo business only; paid audio pipeline only if `DEMO_ALLOW_AUDIO=true`).
+- **Admin leads pipeline `/admin/leads`**: board with New → Demo scheduled → Demo done → Trial → Paying → Lost, WhatsApp contact button, stage changes, timestamped notes (author recorded), total + lead→paying conversion. Leads are super-admin-only under RLS (tested).
+- **Seed**: 6 demo leads across stages.
+- **Tests**: core 138 (adds `test/db/leads.test.ts`: normalize + merge repeats, validation, pipeline notes, RLS), e2e 22 (adds `marketing.spec.ts`: Arabic RTL home with DB pricing, ROI maths, FAQ, demo request → admin board → stage change, live demo chat + public demo call).
+
 ## What's mocked / needs keys
 
 | Area | Now | To go live |
@@ -148,6 +156,8 @@ _Last updated: Phase 3 complete._
 - **Deposits hold the slot as `pending`** (it blocks double booking) instead of letting the customer "own" an unpaid slot; staff stay in control (mark received / waive), AI never marks payments.
 - **Campaign consent is opt-in** (marketing checkbox on booking, or staff toggle) — Meta requires it for MARKETING templates; recalls/reviews are service messages and only respect WhatsApp opt-out.
 - **Charts are plain HTML/CSS** (no chart library): small, server-rendered, RTL-friendly, accessible tooltips + table view.
+- **Marketing claims stay honest**: no made-up percentages; the ROI calculator shows its formula and says it's an estimate; the hero chat is labelled as an example.
+- **Public demo is text-mode by default** (browser speech) so an anonymous visitor can't run up OpenAI/ElevenLabs costs; it uses the real agent and the real demo calendar.
 - **Invoices as printable HTML** (browser "Save as PDF") instead of a PDF library — boring and dependency-free.
 - Dashboard nav only shows sections that exist in the current build (`BUILT` set in `apps/web/src/lib/dashboard-data.ts`).
 
@@ -159,4 +169,4 @@ _Last updated: Phase 3 complete._
 
 ## Exact next step
 
-Phase 6 (marketing site + sales tools): Arabic-first marketing site at `/` (en/fr) with hero, the missed-calls problem, how it works, the three tiers (from the plans table), FAQ and a "Book a demo" form that creates a lead; live demo page (chat with / call the Demo Dental agent, rate-limited); admin leads pipeline (lead → demo → trial → paying, notes); ROI calculator (missed calls/day × average appointment value → monthly lost revenue).
+Phase 7 (hardening + handoff): security pass (RLS verification tests across every tenant table, webhook signature checks, rate limits on public + AI endpoints, input validation, secrets only in env), Sentry-ready error hooks + structured logging, health checks for web + voice, prompt-injection guard + tests, full README (Mermaid architecture, <10-command setup, every env var, connecting real WhatsApp/telephony/voice/LLM, deploy guide Vercel + Railway/Fly + Supabase, onboarding a real business), complete `.env.example`, final PROGRESS.md.
