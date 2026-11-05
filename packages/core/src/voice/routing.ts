@@ -7,7 +7,7 @@ import type { Business } from "../db/schema";
 import { withTenant } from "../db/tenant";
 import { loadCalendarInput } from "../availability/loader";
 import { workingWindows } from "../availability/engine";
-import { aiBlockedReason } from "../billing/features";
+import { checkAiAllowed } from "../billing/limits";
 import { realtimeAvailable } from "./realtime";
 import { streamingSTTAvailable } from "./stt-stream";
 import { ttsProviderKind } from "./tts";
@@ -38,7 +38,8 @@ export function choosePhonePipeline(business: Business): VoicePipelineKind {
 }
 
 export async function routeIncomingCall(business: Business, opts: { afterDial?: boolean } = {}): Promise<CallRoute> {
-  const blocked = aiBlockedReason(business, "voiceAi");
+  const check = await checkAiAllowed(business, "voiceAi");
+  const blocked = check.ok ? null : check.reason;
   const transfer = business.aiSettings?.transferNumber ?? business.phone ?? null;
   if (blocked) {
     return transfer ? { kind: "ring_business", number: transfer, timeout: 30 } : { kind: "unavailable", reason: blocked };

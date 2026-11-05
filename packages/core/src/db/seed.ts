@@ -12,7 +12,7 @@ import { eq, sql } from "drizzle-orm";
 import { DateTime } from "luxon";
 import { closeDb } from "./client";
 import { withSystem, withTenant, type Tx } from "./tenant";
-import { appointments, businesses, plans, resources, services as servicesTable, users, type PlanTier } from "./schema";
+import { appointments, businesses, plans, resources, services as servicesTable, subscriptions, usageEvents, users, type PlanTier } from "./schema";
 import { createUser, findUserByEmail } from "../auth/users";
 import {
   addHoliday,
@@ -231,6 +231,22 @@ export async function setupDentalCatalog(tx: Tx, id: string): Promise<void> {
   await addTimeOff(tx, id, { staffId: maya.id, startsAt: nextWeek.toJSDate(), endsAt: nextWeek.plus({ days: 1 }).toJSDate(), reason: "Training day" });
 }
 
+/** Demo billing history: active subscription, last month paid, usage this month. */
+async function seedBilling(businessId: string, opts: { aiMessages: number; voiceMinutes: number; openInvoice: boolean }) {
+  const { createInvoice, markInvoicePaid } = await import("../billing/invoices");
+  const actor = { type: "system" as const, label: "seed" };
+  const now = DateTime.now().setZone("Asia/Beirut");
+  await withSystem(async (tx) => {
+    await tx.update(subscriptions).set({ status: "active", setupFeePaid: false }).where(eq(subscriptions.businessId, businessId));
+    const last = await createInvoice(tx, { businessId, period: now.minus({ months: 1 }).toFormat("yyyy-MM"), actor });
+    await markInvoicePaid(tx, { invoiceId: last.id, method: "bank_transfer", reference: "BLOM-TRX-" + last.number.slice(-4), actor });
+    if (opts.openInvoice) await createInvoice(tx, { businessId, period: now.toFormat("yyyy-MM"), actor });
+    const period = now.toFormat("yyyy-MM");
+    if (opts.aiMessages) await tx.insert(usageEvents).values({ businessId, type: "ai_message", quantity: opts.aiMessages, period, metadata: { seed: true } });
+    if (opts.voiceMinutes) await tx.insert(usageEvents).values({ businessId, type: "voice_minute", quantity: opts.voiceMinutes, period, metadata: { seed: true } });
+  });
+}
+
 async function seedDental(ownerId: string) {
   const existing = await withSystem((tx) => tx.select().from(businesses).where(eq(businesses.slug, DEMO.dentalSlug)));
   if (existing.length) return { businessId: existing[0]!.id, skipped: true };
@@ -304,6 +320,7 @@ async function seedDental(ownerId: string) {
   const serviceIds = (await withTenant(id, (tx) => tx.select({ id: servicesTable.id }).from(servicesTable))).map((s) => s.id);
   const customers = makeCustomers(32, rand);
   const n = await seedAppointments({ businessId: id, serviceIds, customers, perDay: 7, rand });
+  await seedBilling(id, { aiMessages: 412, voiceMinutes: 96, openInvoice: false });
   return { businessId: id, skipped: false, appointments: n };
 }
 
@@ -342,6 +359,7 @@ async function seedBarber(ownerId: string) {
   });
   const serviceIds = (await withTenant(id, (tx) => tx.select({ id: servicesTable.id }).from(servicesTable))).map((s) => s.id);
   const n = await seedAppointments({ businessId: id, serviceIds, customers: makeCustomers(12, rand), perDay: 4, rand });
+  await seedBilling(id, { aiMessages: 188, voiceMinutes: 0, openInvoice: true });
   return { businessId: id, skipped: false, appointments: n };
 }
 

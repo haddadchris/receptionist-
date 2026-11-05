@@ -1,4 +1,5 @@
-import { aiBlockedReason } from "@fekerte/core/billing/features";
+import { checkAiAllowed } from "@fekerte/core/billing/limits";
+import type { TKey } from "@/i18n";
 import { config } from "@fekerte/core/config";
 import { llmProviderKind } from "@fekerte/core/agent/llm/index";
 import { requireBusiness } from "@/lib/auth/current";
@@ -14,7 +15,8 @@ export default async function AiPage() {
   const ctx = await requireBusiness();
   const { t } = await getT();
   const b = ctx.business;
-  const blocked = aiBlockedReason(b, "whatsappAi");
+  const check = await checkAiAllowed(b, "whatsappAi");
+  const blocked = check.ok ? null : check.reason;
   const snippet = `<script src="${config.appUrl}/widget.js" data-business="${b.slug}" data-color="${b.branding.primaryColor ?? "#0e7490"}" async></script>`;
   const provider = llmProviderKind();
   return (
@@ -23,7 +25,7 @@ export default async function AiPage() {
         title={t("ai.title")}
         actions={
           <div className="flex items-center gap-2">
-            <Badge tone={blocked ? "warning" : "success"}>{blocked ? t("ai.blocked", { reason: blocked }) : t("ai.statusOk")}</Badge>
+            <Badge tone={blocked ? "warning" : "success"}>{blocked ? t("ai.blocked", { reason: t(`billing.reason.${blocked}` as TKey) }) : t("ai.statusOk")}</Badge>
             <Badge tone="outline">LLM: {provider}</Badge>
           </div>
         }

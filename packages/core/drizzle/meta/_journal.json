@@ -22,6 +22,20 @@
       "when": 1793859486705,
       "tag": "0002_agent_state",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793863330157,
+      "tag": "0003_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793863331275,
+      "tag": "0004_billing_rls",
+      "breakpoints": true
     }
   ]
 }

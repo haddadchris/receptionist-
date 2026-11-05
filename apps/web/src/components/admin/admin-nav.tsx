@@ -6,8 +6,12 @@ import { useT } from "@/i18n/client";
 import type { TKey } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-/** Admin sections; later phases append (leads, plans, invoices). */
-export const ADMIN_LINKS: { href: string; label: TKey }[] = [{ href: "/admin", label: "admin.businesses" }];
+/** Admin sections; later phases append (leads). */
+export const ADMIN_LINKS: { href: string; label: TKey }[] = [
+  { href: "/admin", label: "admin.businesses" },
+  { href: "/admin/invoices", label: "admin.invoices" },
+  { href: "/admin/plans", label: "admin.plans" },
+];
 
 export function AdminNav() {
   const t = useT();

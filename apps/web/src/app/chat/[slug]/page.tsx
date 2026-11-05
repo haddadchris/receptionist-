@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { getBusinessBySlug } from "@fekerte/core/business/public";
-import { aiBlockedReason } from "@fekerte/core/billing/features";
+import { checkAiAllowed } from "@fekerte/core/billing/limits";
 import { getT } from "@/i18n/server";
 import { ChatWindow } from "@/components/chat/chat-window";
 import { brandStyle } from "@/components/booking/booking-header";
@@ -15,7 +15,8 @@ export default async function ChatPage({ params, searchParams }: { params: Promi
   if (!business) notFound();
   const { t, locale } = await getT();
   if (!business.languages.includes(locale)) redirect(`/chat/${business.slug}?lang=${business.defaultLanguage}${embed ? "&embed=1" : ""}`);
-  const blocked = aiBlockedReason(business, "webChat");
+  const check = await checkAiAllowed(business, "webChat");
+  const blocked = check.ok ? null : check.reason;
   return (
     <div style={brandStyle(business.branding.primaryColor)} className="flex h-dvh flex-col">
       <header className="flex items-center justify-between bg-primary px-4 py-3 text-primary-foreground">

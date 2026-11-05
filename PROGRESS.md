@@ -9,8 +9,8 @@ _Last updated: Phase 3 complete._
 | 1 | Foundation + Basic tier (online booking) | ✅ Done |
 | 2 | Standard tier — AI WhatsApp receptionist | ✅ Done |
 | 3 | Premium tier — AI voice receptionist (Lebanese Arabic) | ✅ Done |
-| 4 | Billing, plans, limits | ⏳ Next |
-| 5 | Growth layer (CRM, deposits, reviews, recalls, analytics, campaigns) | ⏳ |
+| 4 | Billing, plans, limits | ✅ Done |
+| 5 | Growth layer (CRM, deposits, reviews, recalls, analytics, campaigns) | ⏳ Next |
 | 6 | Marketing site + sales tools | ⏳ |
 | 7 | Hardening + handoff | ⏳ |
 
@@ -76,6 +76,20 @@ _Last updated: Phase 3 complete._
 10. Measure latency (caller stops → first audio) for `realtime` vs `cascade`; target < 1.2 s. If cascade is slow, set `ANTHROPIC_MODEL` to a faster Claude model for the voice process and lower `VOICE_SILENCE_MS`.
 11. Kill the OpenAI key → pipeline falls back to `<Gather>`; call still works (robotic Polly voice).
 
+## Phase 4 — what's done
+
+- **Plans & pricing** (`packages/core/src/billing/plans.ts`): Basic / Standard / Premium with setup + monthly fee (USD), included AI messages / voice minutes and per-unit overage — all editable by the super admin at `/admin/plans`. Price changes apply to new subscriptions; each business's subscription keeps its own (negotiable) fees, editable on its admin page.
+- **Feature gating by tier** (`billing/features.ts`): WhatsApp AI + web chat + reviews/recalls/campaigns need Standard+, voice AI needs Premium; per-business overrides via feature flags. Enforced server-side in every AI channel (WhatsApp worker, web chat API, Twilio routing) and reflected in dashboard navigation.
+- **Usage limits** (`billing/limits.ts`): AI messages (WhatsApp + web chat replies) and voice minutes (phone calls) are metered per business-local month. Usage beyond the included amount is **allowed and billed** as overage on the next invoice; a safety **hard cap** (default 3× included, `USAGE_HARD_CAP_MULTIPLIER`) pauses AI to prevent runaway cost. `checkAiAllowed()` = plan + billing status + trial + cap.
+- **Manual billing** (`billing/invoices.ts`, `providers/payments.ts`): invoices numbered `FK-YYYY-NNNN` with lines for the monthly fee, unpaid setup fee and the previous month's overage. Admin marks paid with method (cash / bank transfer / wallet / card / other), reference and an optional receipt upload (image/PDF ≤ 5 MB, stored via the storage adapter — local disk or Supabase Storage). Paying activates the business and resumes AI. Void supported. Printable invoice page (browser print → PDF).
+- **Payments adapter**: `manual` (default — payment instructions from `PAYMENT_INSTRUCTIONS`) and `mock_link` (demo only, never charges). No card processor / wallet API is faked; a real one implements `PaymentsProvider`.
+- **Trial → pause**: 14-day trial (Premium features). A daily billing sweep (`billing/sweep.ts`, scheduled by `jobs/scheduler.ts` through the existing job queue) pauses AI for trials that ended unpaid (and issues their first invoice), pauses businesses with invoices overdue by `BILLING_GRACE_DAYS`, and on the 1st issues monthly invoices for active businesses (`BILLING_AUTO_INVOICE`). **The booking page keeps working** in every paused state (tested).
+- **Owner billing page** `/dashboard/billing`: current plan + status, usage meters with included amounts and estimated overage, AI status per channel with the reason when off, plan comparison (switch instantly during trial; request → admin approval when active), invoice history, "how to pay" with reference, "Activate my plan now" (get the first invoice before the trial ends). Dashboard-wide banner for trial ending / paused / cap reached.
+- **Admin**: `/admin/invoices` (MRR, outstanding, collected this month, status filter, generate this month's invoices, mark paid with receipt, void), `/admin/invoices/[id]` (printable + receipt link), business page now has subscription fees / setup-paid / approve-or-reject plan requests / new invoice / invoice list. Admin tier changes go through `applyPlanChange` (subscription fees follow the price list).
+- **RLS hardening** (migration `0004_billing_rls`): owners can **read** their invoices/subscriptions but not write them; usage events are append-only for tenants; tenants may only write `deposit` payments; a trigger blocks non-admin changes to `plan_tier`, `status`, `trial_ends_at`, `feature_flags` on `businesses` (owner billing actions run narrowly on the system connection after an owner check).
+- **Seed**: Demo Dental (Premium, active, last month paid, usage this month) and Demo Barber (Standard, active, last month paid, this month's invoice outstanding).
+- **Tests**: core 120 (adds `test/db/billing.test.ts`: tier gating, overage + hard cap, invoice lines, trial expiry → pause → first invoice → booking still works → pay → active, overdue pause, void, monthly idempotency, plan change rules, admin pricing, RLS on billing tables), e2e 15 (adds `billing.spec.ts`: owner billing page, Standard tier gating + upgrade request, admin issues invoice + marks paid with reference and receipt upload, plans page). Login rate limit is now 30/min per IP + 10/min per account (was 10/min per IP — tripped by clinics sharing one IP, and by the e2e suite).
+
 ## What's mocked / needs keys
 
 | Area | Now | To go live |
@@ -87,6 +101,8 @@ _Last updated: Phase 3 complete._
 | Realtime / streaming STT | Not active without keys (browser text mode / `<Gather>` instead) | `OPENAI_API_KEY` (Realtime GA shapes verified from SDK types; untested live) |
 | TTS | None (browser speech synthesis in simulator) | `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` (Lebanese/Levantine voice) or OpenAI TTS. **Untested live** (elevenlabs.io unreachable here) |
 | Email (magic links) | Printed to server log / shown in dev | Use `AUTH_PROVIDER=supabase` (Supabase sends emails) |
+| Payments | Manual invoicing (admin marks paid) | Nothing required — this is the intended Lebanon flow. For card/wallet collection, implement `PaymentsProvider` for the chosen processor (none faked) |
+| Receipt storage | Local disk (`.data/uploads`) | `STORAGE_PROVIDER=supabase` + `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` + a private bucket (REST shape from docs; untested live) |
 | Rate limiting | In-memory per instance | Swap store for Redis/Upstash on multi-instance deploys (Phase 7) |
 
 ## Decisions
@@ -108,6 +124,11 @@ _Last updated: Phase 3 complete._
 - **Read-back before booking on calls** (not on WhatsApp): mishearing is the main voice risk.
 - **Call outcome is derived from tool results**, not model self-report.
 - **Lebanese numbers**: Twilio may not sell +961 numbers; plan is call forwarding (always / on no-answer) from the clinic's existing line to a Twilio number, or a SIP trunk from a Lebanese carrier into Twilio Elastic SIP. Recorded as an open question for go-live.
+- **Overage is billed, not blocked**; only a 3× safety cap pauses AI. Owners never get surprise silence from the AI in a busy month, and Fekerte is protected from runaway cost.
+- **Trial expiry pauses rather than downgrades**: AI stops, booking/reminders continue, and the first invoice is issued automatically so the owner sees exactly what to pay.
+- **Owner plan changes**: free switching during the trial; on paid subscriptions an upgrade/downgrade is a request the admin approves (pricing is often negotiated in Lebanon).
+- **Billing state is admin-only at the database level** (RLS + trigger), not just in the UI.
+- **Invoices as printable HTML** (browser "Save as PDF") instead of a PDF library — boring and dependency-free.
 - Dashboard nav only shows sections that exist in the current build (`BUILT` set in `apps/web/src/lib/dashboard-data.ts`).
 
 ## Known issues / limitations
@@ -118,4 +139,4 @@ _Last updated: Phase 3 complete._
 
 ## Exact next step
 
-Phase 4: plans/pricing in admin, feature gating + usage limits with overage, manual invoices (mark paid with reference/receipt), billing page for owners, 14-day trial → pause AI when unpaid.
+Phase 5 (growth layer): CRM segments + customer timeline, deposits (payment-link adapter + manual "deposit received" + auto-cancel unpaid holds), review requests after completed visits (4–5 → Google, 1–3 → private feedback), per-service recall rules, confirmation requests + no-show tracking + deposits for repeat no-shows, analytics dashboard (ROI), WhatsApp campaigns to segments with opt-out.

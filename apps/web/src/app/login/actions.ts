@@ -38,9 +38,11 @@ const loginSchema = z.object({ email: z.string().trim().email(), password: z.str
 export async function loginAction(_: unknown, form: FormData): Promise<Result> {
   const { t } = await getT();
   const ip = await clientIp();
-  if (!rateLimit(`login:${ip}`, 10, 60_000).ok) return { ok: false, error: t("errors.rateLimited") };
+  // Per-IP (clinics often share one NAT'd IP) and per-account limits against brute force.
+  if (!rateLimit(`login:${ip}`, 30, 60_000).ok) return { ok: false, error: t("errors.rateLimited") };
   const parsed = loginSchema.safeParse({ email: form.get("email"), password: form.get("password") });
   if (!parsed.success) return { ok: false, error: t("auth.invalidCredentials") };
+  if (!rateLimit(`login-account:${parsed.data.email.toLowerCase()}`, 10, 60_000).ok) return { ok: false, error: t("errors.rateLimited") };
   const res = await getAuth().signIn(parsed.data.email, parsed.data.password);
   if ("error" in res) return { ok: false, error: t("auth.invalidCredentials") };
   return { ok: true, redirectTo: await landing(res.userId, safeNext(form.get("next"))) };

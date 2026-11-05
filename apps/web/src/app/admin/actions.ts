@@ -6,9 +6,10 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { withSuperAdmin } from "@fekerte/core/db/tenant";
-import { businesses, subscriptions, type FeatureFlags } from "@fekerte/core/db/schema";
+import { businesses, type FeatureFlags } from "@fekerte/core/db/schema";
 import { audit } from "@fekerte/core/lib/audit";
 import { ALL_FEATURES } from "@fekerte/core/billing/features";
+import { applyPlanChange } from "@fekerte/core/billing/plans";
 import { IMPERSONATE_COOKIE, requireSuperAdmin } from "@/lib/auth/current";
 import { runAction } from "@/lib/actions";
 
@@ -51,20 +52,21 @@ export async function updateBusinessAdminAction(input: {
     const flags = p.featureFlags
       ? Object.fromEntries(Object.entries(p.featureFlags).filter(([k, v]) => ALL_FEATURES.includes(k as never) && typeof v === "boolean"))
       : undefined;
+    const actor = { type: "user", userId: admin.id, label: admin.email } as const;
     await withSuperAdmin(async (tx) => {
+      const [current] = await tx.select({ planTier: businesses.planTier }).from(businesses).where(eq(businesses.id, p.businessId));
+      if (p.planTier && current && current.planTier !== p.planTier) await applyPlanChange(tx, p.businessId, p.planTier, actor);
       await tx
         .update(businesses)
         .set({
-          ...(p.planTier ? { planTier: p.planTier } : {}),
           ...(p.status ? { status: p.status } : {}),
           ...(flags ? { featureFlags: flags } : {}),
           ...(p.trialEndsAt !== undefined ? { trialEndsAt: p.trialEndsAt ? new Date(p.trialEndsAt) : null } : {}),
         })
         .where(eq(businesses.id, p.businessId));
-      if (p.planTier) await tx.update(subscriptions).set({ planTier: p.planTier }).where(eq(subscriptions.businessId, p.businessId));
       await audit(tx, {
         businessId: p.businessId,
-        actor: { type: "user", userId: admin.id, label: admin.email },
+        actor,
         action: "admin.business_updated",
         entityType: "business",
         entityId: p.businessId,

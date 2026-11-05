@@ -15,6 +15,7 @@ loadEnv({ quiet: true });
 const { buildApp } = await import("./app");
 const { registerDefaultJobHandlers } = await import("@fekerte/core/jobs/handlers");
 const { runDueJobs } = await import("@fekerte/core/jobs/queue");
+const { scheduleRecurringJobs } = await import("@fekerte/core/jobs/scheduler");
 const { logger } = await import("@fekerte/core/lib/logger");
 
 const app = await buildApp();
@@ -25,7 +26,9 @@ logger.info(`voice server listening on :${port}`);
 if (process.env.VOICE_JOB_WORKER !== "false") {
   registerDefaultJobHandlers();
   setInterval(() => {
-    runDueJobs({ limit: 25 }).catch((err) => logger.warn("job worker tick failed", { err: String(err) }));
+    scheduleRecurringJobs()
+      .then(() => runDueJobs({ limit: 25 }))
+      .catch((err) => logger.warn("job worker tick failed", { err: String(err) }));
   }, Number(process.env.VOICE_JOB_INTERVAL_MS ?? 15_000));
 }
 

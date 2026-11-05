@@ -1,5 +1,6 @@
 import { runDueJobs } from "@fekerte/core/jobs/queue";
 import { registerDefaultJobHandlers } from "@fekerte/core/jobs/handlers";
+import { scheduleRecurringJobs } from "@fekerte/core/jobs/scheduler";
 import { config } from "@fekerte/core/config";
 import { json } from "@/lib/api";
 
@@ -16,6 +17,7 @@ async function handle(req: Request) {
   const auth = req.headers.get("authorization");
   if (!secret || auth !== `Bearer ${secret}`) return json({ error: "Unauthorized" }, { status: 401 });
   registerDefaultJobHandlers();
+  await scheduleRecurringJobs();
   let processed = 0;
   let failed = 0;
   // Drain up to 4 batches per invocation.

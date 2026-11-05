@@ -4,7 +4,7 @@ import { desc, eq } from "drizzle-orm";
 import { ArrowLeft } from "lucide-react";
 import { withSuperAdmin } from "@fekerte/core/db/tenant";
 import { getBusinessForAdmin } from "@fekerte/core/admin/overview";
-import { auditLog } from "@fekerte/core/db/schema";
+import { auditLog, invoices, plans, subscriptions } from "@fekerte/core/db/schema";
 import { TIER_FEATURES } from "@fekerte/core/billing/features";
 import { usageForPeriod } from "@fekerte/core/lib/usage";
 import { periodKey } from "@fekerte/core/lib/time";
@@ -13,6 +13,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Stat } from "@/components/ui/stat";
 import { BusinessAdminForm } from "@/components/admin/business-admin-form";
+import { InvoiceAdminActions, NewInvoiceButton, SubscriptionForm } from "@/components/admin/billing-admin";
+import { Badge } from "@/components/ui/card";
+import type { TKey } from "@/i18n";
+import { fmtPrice } from "@/lib/format";
 import { startImpersonationAction } from "@/app/admin/actions";
 import { fmtDateTime } from "@/lib/format";
 
@@ -25,10 +29,15 @@ export default async function AdminBusinessPage({ params }: { params: Promise<{ 
     if (!business) return null;
     const usage = await usageForPeriod(tx, id, periodKey(business.timezone));
     const log = await tx.select().from(auditLog).where(eq(auditLog.businessId, id)).orderBy(desc(auditLog.createdAt)).limit(30);
-    return { business, usage, log };
+    const [sub] = await tx.select().from(subscriptions).where(eq(subscriptions.businessId, id));
+    const invs = await tx.select().from(invoices).where(eq(invoices.businessId, id)).orderBy(desc(invoices.createdAt)).limit(12);
+    const planRows = await tx.select().from(plans);
+    return { business, usage, log, sub: sub ?? null, invs, planRows };
   });
   if (!data) notFound();
-  const { business: b, usage, log } = data;
+  const { business: b, usage, log, sub, invs, planRows } = data;
+  const pendingPlan = sub?.pendingPlanTier ? planRows.find((p) => p.tier === sub.pendingPlanTier) : null;
+  const INVOICE_TONE = { draft: "muted", issued: "warning", paid: "success", void: "muted" } as const;
   return (
     <div className="grid gap-5">
       <div className="flex flex-wrap items-center gap-3">
@@ -60,6 +69,48 @@ export default async function AdminBusinessPage({ params }: { params: Promise<{ 
               tierDefaults={TIER_FEATURES as never}
               business={{ id: b.id, planTier: b.planTier, status: b.status, featureFlags: b.featureFlags, trialEndsAt: b.trialEndsAt?.toISOString() ?? null }}
             />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("adminBilling.subscription")}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {sub ? (
+              <SubscriptionForm
+                businessId={b.id}
+                initial={{ setupFeeCents: sub.setupFeeCents, monthlyFeeCents: sub.monthlyFeeCents, setupFeePaid: sub.setupFeePaid }}
+                pending={pendingPlan ? { tier: pendingPlan.tier, name: pendingPlan.name } : null}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">—</p>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle>{t("adminBilling.invoicesTitle")}</CardTitle>
+            <NewInvoiceButton businessId={b.id} period={periodKey(b.timezone)} />
+          </CardHeader>
+          <CardContent>
+            {invs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("billing.noInvoices")}</p>
+            ) : (
+              <ul className="divide-y text-sm">
+                {invs.map((inv) => (
+                  <li key={inv.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <Link href={`/admin/invoices/${inv.id}`} className="font-medium hover:underline" dir="ltr">
+                      {inv.number}
+                    </Link>
+                    <span className="flex items-center gap-2">
+                      <span className="tabular-nums">{fmtPrice(inv.totalCents)}</span>
+                      <Badge tone={INVOICE_TONE[inv.status]}>{t(`billing.invoiceStatus.${inv.status}` as TKey)}</Badge>
+                      <InvoiceAdminActions invoiceId={inv.id} status={inv.status} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
         <Card>

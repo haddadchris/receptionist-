@@ -122,7 +122,8 @@ export function getTTSProvider(): TTSProvider {
 export function toSpeakable(text: string, language: "ar" | "en" | "fr"): string {
   let t = text
     .replace(/https?:\/\/\S+/g, "")
-    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
+    .replace(/\u{FE0F}|\u{200D}/gu, "")
     .replace(/^\s*(?:[-•*]|\d+[.)])\s+/gm, "")
     .replace(/\s*\n+\s*/g, language === "ar" ? "، " : ", ")
     .replace(/\s{2,}/g, " ");

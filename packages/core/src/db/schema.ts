@@ -741,6 +741,8 @@ export const subscriptions = pgTable(
     setupFeeCents: integer("setup_fee_cents").notNull().default(0),
     monthlyFeeCents: integer("monthly_fee_cents").notNull().default(0),
     setupFeePaid: boolean("setup_fee_paid").notNull().default(false),
+    /** Owner-requested plan change awaiting admin approval (active subscriptions). */
+    pendingPlanTier: planTierEnum("pending_plan_tier"),
     trialEndsAt: tstz("trial_ends_at"),
     currentPeriodStart: tstz("current_period_start"),
     currentPeriodEnd: tstz("current_period_end"),

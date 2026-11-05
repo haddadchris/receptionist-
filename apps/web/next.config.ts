@@ -12,6 +12,10 @@ const nextConfig: NextConfig = {
     root: path.resolve(import.meta.dirname, "../.."),
   },
   poweredByHeader: false,
+  experimental: {
+    // Receipt uploads (≤ 5 MB) go through server actions.
+    serverActions: { bodySizeLimit: "6mb" },
+  },
   async headers() {
     return [
       {

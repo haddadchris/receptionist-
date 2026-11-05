@@ -9,6 +9,7 @@ import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { bookingUrl } from "@fekerte/core/booking/tokens";
 import { enabledNavFeatures, unreadCount } from "@/lib/dashboard-data";
 import { stopImpersonationAction } from "@/app/admin/actions";
+import { BillingBanner } from "@/components/billing/billing-banner";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireBusiness({ allowIncompleteOnboarding: false });
@@ -17,8 +18,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const unread = await unreadCount(ctx.business.id);
   const link = bookingUrl(ctx.business.slug);
   return (
-    <div className="min-h-dvh md:grid md:grid-cols-[240px_1fr]">
-      <aside className="sticky top-0 hidden h-dvh flex-col gap-4 border-e bg-card p-3 md:flex">
+    <div className="min-h-dvh md:grid md:grid-cols-[240px_1fr] print:block">
+      <aside className="sticky top-0 hidden h-dvh flex-col gap-4 border-e bg-card p-3 md:flex print:hidden">
         <div className="px-2 pt-1">
           <Logo href="/dashboard" />
           <p className="mt-2 truncate text-xs text-muted-foreground">{ctx.business.name}</p>
@@ -41,7 +42,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
             </form>
           </div>
         ) : null}
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur">
+        <BillingBanner business={ctx.business} isOwner={ctx.role === "owner" || ctx.role === "super_admin"} />
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur print:hidden">
           <div className="md:hidden">
             <Logo href="/dashboard" />
           </div>
@@ -60,7 +62,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </header>
         <main className="flex-1 px-4 pt-4 pb-24 md:px-6 md:pb-8">{children}</main>
       </div>
-      <MobileNav features={features} bookingUrl={link} unread={unread} />
+      <div className="print:hidden">
+        <MobileNav features={features} bookingUrl={link} unread={unread} />
+      </div>
     </div>
   );
 }

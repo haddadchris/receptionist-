@@ -9,7 +9,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { withTenant } from "../db/tenant";
 import { conversations, messages, type Business, type ConversationLanguage } from "../db/schema";
 import { signValue, verifyValue } from "../booking/tokens";
-import { aiBlockedReason } from "../billing/features";
+import { checkAiAllowed } from "../billing/limits";
 import { recordUsage } from "../lib/usage";
 import { DomainError } from "../lib/errors";
 import { acquireLease, appendMessage, getOrCreateConversation, loadHistory, releaseLease, setConversationStatus } from "../agent/conversations";
@@ -36,8 +36,9 @@ export async function handleWebChatMessage(input: {
 }): Promise<WebChatTurn> {
   const text = input.text.trim().slice(0, 1000);
   if (!text) throw new DomainError("VALIDATION", "Empty message");
-  const blocked = aiBlockedReason(input.business, "webChat");
-  if (blocked && !input.test) throw new DomainError("PLAN_LIMIT", `Web chat unavailable (${blocked})`, { reason: blocked });
+  const check = input.test ? ({ ok: true } as const) : await checkAiAllowed(input.business, "webChat");
+  const blocked = check.ok ? null : check.reason;
+  if (blocked) throw new DomainError("PLAN_LIMIT", `Web chat unavailable (${blocked})`, { reason: blocked });
   let session = webChatSessionFromToken(input.token);
   let token = input.token ?? "";
   if (!session) {
