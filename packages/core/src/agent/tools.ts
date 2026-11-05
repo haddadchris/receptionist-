@@ -418,7 +418,14 @@ const handlers: Record<ToolName, Handler> = {
         start: toLocalStart(appt.startsAt, tz),
         when: spokenDateTime(appt.startsAt, tz, ctx.language, ctx.now),
         staff_name: view!.staffName,
-        note: appt.status === "pending" ? "Booked as a request: the team will confirm it." : "Confirmed. A WhatsApp confirmation is sent automatically.",
+        ...(appt.depositStatus === "required"
+          ? {
+              deposit_required: true,
+              deposit: formatPrice(appt.depositCents),
+              deposit_due: appt.depositDueAt ? spokenDateTime(appt.depositDueAt, tz, ctx.language, ctx.now) : null,
+              note: "NOT confirmed yet: the slot is held until the deposit is paid. Payment details are sent on WhatsApp automatically. Tell the customer the amount and the deadline.",
+            }
+          : { note: appt.status === "pending" ? "Booked as a request: the team will confirm it." : "Confirmed. A WhatsApp confirmation is sent automatically." }),
       };
     } catch (e) {
       if (isDomainError(e) && e.code === "SLOT_UNAVAILABLE") {

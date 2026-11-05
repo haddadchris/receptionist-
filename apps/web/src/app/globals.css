@@ -26,6 +26,24 @@
   --border: oklch(0.91 0.008 220);
   --input: oklch(0.89 0.01 220);
   --ring: oklch(0.6 0.1 210);
+  /* Data-viz roles (validated categorical slots 1–2 + blue sequential ramp). */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-seq-0: #eef4fc;
+  --viz-seq-1: #cde2fb;
+  --viz-seq-2: #9ec5f4;
+  --viz-seq-3: #6da7ec;
+  --viz-seq-4: #3987e5;
+  --viz-seq-5: #256abf;
+  --viz-seq-6: #184f95;
+  --viz-grid: #e1e0d9;
+  --viz-axis: #c3c2b7;
+}
+.dark {
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-grid: #2c2c2a;
+  --viz-axis: #383835;
 }
 
 @theme inline {

@@ -25,6 +25,8 @@ import { audit } from "../lib/audit";
 import { recordUsage } from "../lib/usage";
 import { detectLanguage } from "../lib/lang";
 import { onOutboundWhatsApp } from "../notifications/hooks";
+import { handleReviewReply } from "../growth/reviews";
+import { manageUrl } from "../booking/tokens";
 import {
   acquireLease,
   appendMessage,
@@ -200,31 +202,34 @@ async function replyOnce(businessId: string, conversationId: string): Promise<st
   });
   if (!ctx || !ctx.pending.length) return "nothing";
   const { convo, pending, customer } = ctx;
-  if (convo.status !== "ai_active") return "human_takeover";
-  const check = await checkAiAllowed(business, "whatsappAi");
-  if (!check.ok) return `ai_blocked:${check.reason}`;
-  if (business.aiSettings?.whatsappAutoReply === false) return "auto_reply_off";
   const phone = convo.externalId!;
   const lang = (convo.language as ConversationLanguage | null) ?? (customer?.preferredLanguage as ConversationLanguage | null) ?? null;
-
   const texts = pending.map((m) => (m.contentType === "audio" ? (m.transcript ?? "") : (m.body ?? ""))).filter(Boolean);
+  const userText = texts.join("\n");
+
+  const aiCheck = await checkAiAllowed(business, "whatsappAi");
+  const aiOn = convo.status === "ai_active" && aiCheck.ok && business.aiSettings?.whatsappAutoReply !== false;
+
+  // Structured replies (no LLM): reminder confirmations and review ratings work on
+  // every plan — even when the AI is off, paused, or staff took over.
+  if (customer && userText) {
+    const structured = await structuredReply(business, { conversationId, customerId: customer.id, text: userText, lang, aiOn });
+    if (structured) {
+      await sendAndStore(business, conversationId, phone, structured.reply, structured.toolLog, structured.sender);
+      return "replied";
+    }
+  }
+
+  if (convo.status !== "ai_active") return "human_takeover";
+  if (!aiCheck.ok) return `ai_blocked:${aiCheck.reason}`;
+  if (business.aiSettings?.whatsappAutoReply === false) return "auto_reply_off";
+
   const onlyUntranscribedAudio = pending.every((m) => m.contentType === "audio" && !m.transcript);
   if (onlyUntranscribedAudio) {
     await sendAndStore(business, conversationId, phone, VOICE_FALLBACK[lang ?? (business.defaultLanguage as ConversationLanguage)], []);
     return "replied";
   }
-  const userText = texts.join("\n");
 
-  // Reply "1" to a confirmation-request reminder → confirm the appointment without the LLM.
-  if (/^\s*[1١]\s*$/.test(userText) && customer) {
-    const confirmed = await confirmFromReminder(business, conversationId, customer.id);
-    if (confirmed) {
-      await sendAndStore(business, conversationId, phone, CONFIRMED_REPLY[lang ?? detectLanguage(userText, "ar").language], [
-        { name: "confirm_appointment", input: { reply: "1" }, output: { appointment_id: confirmed } },
-      ]);
-      return "replied";
-    }
-  }
   const effectiveText = /^\s*[2٢]\s*$/.test(userText) && (await lastWasConfirmRequest(businessId, conversationId))
     ? ({ ar: "بدي غيّر موعدي", arabizi: "badde ghayer maw3ade", en: "I want to reschedule my appointment", fr: "Je voudrais déplacer mon rendez-vous" } as const)[lang ?? "ar"]
     : userText;
@@ -263,7 +268,14 @@ async function replyOnce(businessId: string, conversationId: string): Promise<st
   return "replied";
 }
 
-async function sendAndStore(business: Business, conversationId: string, to: string, body: string, toolLog: { name: string; input: unknown; output?: unknown; error?: string }[]) {
+async function sendAndStore(
+  business: Business,
+  conversationId: string,
+  to: string,
+  body: string,
+  toolLog: { name: string; input: unknown; output?: unknown; error?: string }[],
+  sender: "ai" | "system" = "ai",
+) {
   let providerMessageId: string | null = null;
   let status: "sent" | "failed" = "sent";
   try {
@@ -273,8 +285,79 @@ async function sendAndStore(business: Business, conversationId: string, to: stri
     logger.error("whatsapp send failed", { err, businessId: business.id });
   }
   await withTenant(business.id, (tx) =>
-    appendMessage(tx, { businessId: business.id, conversationId, direction: "outbound", sender: "ai", body, providerMessageId, status, toolCalls: toolLog }),
+    appendMessage(tx, { businessId: business.id, conversationId, direction: "outbound", sender, body, providerMessageId, status, toolCalls: toolLog }),
   );
+}
+
+type Structured = { reply: string; toolLog: { name: string; input: unknown; output?: unknown }[]; sender: "ai" | "system" };
+
+const RESCHEDULE_LINK: Record<ConversationLanguage, (url: string) => string> = {
+  ar: (u) => `أكيد! فيك تختار وقت جديد من هون: ${u}`,
+  arabizi: (u) => `Akid! Fik tekhtar wa2t jdid men hon: ${u}`,
+  en: (u) => `Of course! You can pick a new time here: ${u}`,
+  fr: (u) => `Bien sûr ! Vous pouvez choisir un nouvel horaire ici : ${u}`,
+};
+
+async function lastOutbound(businessId: string, conversationId: string) {
+  const [last] = await withTenant(businessId, (tx) =>
+    tx
+      .select({ body: messages.body, contentType: messages.contentType, createdAt: messages.createdAt })
+      .from(messages)
+      .where(and(eq(messages.conversationId, conversationId), eq(messages.direction, "outbound"), sql`${messages.contentType} <> 'event'`))
+      .orderBy(desc(messages.createdAt))
+      .limit(1),
+  );
+  return last ?? null;
+}
+
+async function structuredReply(
+  business: Business,
+  input: { conversationId: string; customerId: string; text: string; lang: ConversationLanguage | null; aiOn: boolean },
+): Promise<Structured | null> {
+  const lang = input.lang ?? detectLanguage(input.text, business.defaultLanguage === "en" ? "en" : business.defaultLanguage === "fr" ? "fr" : "ar").language;
+  // "1" after a confirmation request → confirm the appointment.
+  if (/^\s*[1١]\s*$/.test(input.text)) {
+    const confirmed = await confirmFromReminder(business, input.conversationId, input.customerId);
+    if (confirmed) {
+      return { reply: CONFIRMED_REPLY[lang], toolLog: [{ name: "confirm_appointment", input: { reply: "1" }, output: { appointment_id: confirmed } }], sender: "ai" };
+    }
+  }
+  // "2" after a confirmation request without the AI → send the self-service reschedule link.
+  if (!input.aiOn && /^\s*[2٢]\s*$/.test(input.text) && (await lastWasConfirmRequest(business.id, input.conversationId))) {
+    const [appt] = await withTenant(business.id, (tx) =>
+      tx
+        .select({ id: appointments.id })
+        .from(appointments)
+        .where(and(eq(appointments.businessId, business.id), eq(appointments.customerId, input.customerId), inArray(appointments.status, ["pending", "confirmed"]), sql`${appointments.startsAt} > now()`))
+        .orderBy(appointments.startsAt)
+        .limit(1),
+    );
+    if (appt) return { reply: RESCHEDULE_LINK[lang](manageUrl(business.slug, appt.id)), toolLog: [{ name: "send_reschedule_link", input: { reply: "2" }, output: { appointment_id: appt.id } }], sender: "system" };
+  }
+  // Review rating (1–5) or the private feedback that follows a low rating.
+  const review = await handleReviewReply(business, {
+    customerId: input.customerId,
+    conversationId: input.conversationId,
+    text: input.text,
+    language: lang,
+    lastOutbound: await lastOutbound(business.id, input.conversationId),
+  });
+  if (review) {
+    if (review.feedback) {
+      await withTenant(business.id, (tx) =>
+        appendMessage(tx, {
+          businessId: business.id,
+          conversationId: input.conversationId,
+          direction: "outbound",
+          sender: "system",
+          contentType: "event",
+          body: `⭐ ${review.rating ?? "?"}/5 — private feedback for the owner: ${review.feedback}`,
+        }),
+      );
+    }
+    return { reply: review.reply, toolLog: [{ name: "review_reply", input: { text: input.text }, output: { rating: review.rating, feedback: !!review.feedback } }], sender: "system" };
+  }
+  return null;
 }
 
 async function lastWasConfirmRequest(businessId: string, conversationId: string): Promise<boolean> {

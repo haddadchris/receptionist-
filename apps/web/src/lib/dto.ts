@@ -20,6 +20,9 @@ export type ApptDTO = {
   notes: string | null;
   internalNotes: string | null;
   priceCents: number | null;
+  depositStatus: "none" | "required" | "paid" | "waived" | "refunded";
+  depositCents: number;
+  depositDueAt: string | null;
 };
 
 export function toApptDTO(a: AppointmentView, locale: Locale): ApptDTO {
@@ -40,6 +43,9 @@ export function toApptDTO(a: AppointmentView, locale: Locale): ApptDTO {
     notes: a.notes,
     internalNotes: a.internalNotes,
     priceCents: a.priceCents,
+    depositStatus: a.depositStatus,
+    depositCents: a.depositCents,
+    depositDueAt: a.depositDueAt?.toISOString() ?? null,
   };
 }
 

@@ -9,8 +9,19 @@ import { Button } from "@/components/ui/button";
 import { Badge, EmptyState } from "@/components/ui/card";
 import { fmtDate } from "@/lib/format";
 import { initials } from "@/lib/utils";
+import { Megaphone } from "lucide-react";
+import { hasFeature } from "@fekerte/core/billing/features";
 
 export const metadata = { title: "Customers" };
+
+const SEGMENTS = [
+  { key: "", label: "segments.all" },
+  { key: "vip", label: "segments.vip" },
+  { key: "lapsed", label: "segments.lapsed" },
+  { key: "no_shows", label: "segments.noShows" },
+  { key: "upcoming", label: "segments.upcoming" },
+  { key: "marketing", label: "segments.marketing" },
+] as const;
 
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; tag?: string; segment?: string }> }) {
   const sp = await searchParams;
@@ -24,23 +35,47 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
       noVisitDays: segment === "lapsed" ? 180 : undefined,
       minNoShows: segment === "no_shows" ? 1 : undefined,
       hasUpcoming: segment === "upcoming" ? true : undefined,
+      marketingOptIn: segment === "marketing" ? true : undefined,
+      ...(segment === "vip" ? { tags: ["VIP"] } : {}),
       limit: 200,
     }),
     tags: await allTags(tx, ctx.business.id),
   }));
   const tz = ctx.business.timezone;
+  const canCampaign = hasFeature(ctx.business, "campaigns");
 
   return (
     <div>
-      <PageHeader title={t("customers.title")} />
-      <form className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
+      <PageHeader
+        title={t("customers.title")}
+        actions={
+          canCampaign && segment && segment !== "upcoming" ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/dashboard/campaigns?segment=${segment}${sp.tag ? `&tag=${encodeURIComponent(sp.tag)}` : ""}`}>
+                <Megaphone /> {t("segments.campaign")}
+              </Link>
+            </Button>
+          ) : null
+        }
+      />
+      <nav className="scrollbar-none -mx-4 mb-3 flex gap-2 overflow-x-auto px-4 text-sm" aria-label={t("customers.title")}>
+        {SEGMENTS.map((s) => {
+          const active = (segment ?? "") === s.key;
+          return (
+            <Link
+              key={s.key}
+              href={s.key ? `/dashboard/customers?segment=${s.key}` : "/dashboard/customers"}
+              className={`shrink-0 rounded-full border px-3 py-1 ${active ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground"}`}
+              data-testid={`segment-${s.key || "all"}`}
+            >
+              {t(s.label)}
+            </Link>
+          );
+        })}
+      </nav>
+      <form className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+        <input type="hidden" name="segment" value={segment ?? ""} />
         <Input name="q" defaultValue={sp.q} placeholder={t("customers.searchPlaceholder")} />
-        <Select name="segment" defaultValue={segment ?? ""}>
-          <option value="">{t("common.all")}</option>
-          <option value="upcoming">{t("customers.upcoming")}</option>
-          <option value="lapsed">{t("customers.lastVisit")} &gt; 6m</option>
-          <option value="no_shows">{t("customers.noShows")}</option>
-        </Select>
         <Select name="tag" defaultValue={sp.tag ?? ""}>
           <option value="">{t("customers.tags")}</option>
           {tags.map((tag) => (

@@ -23,15 +23,18 @@ import {
   type Locale,
 } from "../db/schema";
 import { checkSlot, computeSlots, type Slot, type SlotRejection } from "../availability/engine";
-import { bookingSettings, loadAvailability, type Channel } from "../availability/loader";
+import { bookingSettings, getBusiness, loadAvailability, type Channel } from "../availability/loader";
 import { audit, type Actor } from "../lib/audit";
 import { DomainError, isExclusionViolation } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
 import { cancelAppointmentJobs, enqueueJob } from "../jobs/queue";
+import { createDepositHold, depositDueAt, depositReference, depositRequirement } from "./deposit-rules";
+import { scheduleReviewRequest } from "../growth/reviews";
+import { scheduleRecall } from "../growth/recalls";
 
 export const NOTIFY_JOB = "notify.appointment";
 
-export type NotificationKind = "confirmation" | "pending" | "reminder" | "rescheduled" | "cancelled";
+export type NotificationKind = "confirmation" | "pending" | "reminder" | "rescheduled" | "cancelled" | "deposit_request";
 
 /** Local-date window that surely contains `d` in any timezone (UTC date ±1). */
 function around(d: Date): { fromDate: string; toDate: string } {
@@ -181,6 +184,9 @@ export async function createBooking(tx: Tx, businessId: string, input: CreateBoo
     source: input.source,
   });
 
+  // Deposit: public channels only (staff decide for dashboard bookings).
+  const deposit = channel === "public" ? depositRequirement(business, service, customer) : null;
+
   const reasons: SlotRejection[] = [];
   for (const staffId of candidates) {
     await lockKeys(tx, [`staff:${staffId}`, ...(service.resourceId ? [`resource:${service.resourceId}`] : [])]);
@@ -200,7 +206,7 @@ export async function createBooking(tx: Tx, businessId: string, input: CreateBoo
     }
     const settings = bookingSettings(business);
     const status: AppointmentStatus =
-      input.status ?? (channel === "public" && settings.requireApproval ? "pending" : "confirmed");
+      input.status ?? (deposit || (channel === "public" && settings.requireApproval) ? "pending" : "confirmed");
     const endsAt = new Date(startsAt.getTime() + service.durationMinutes * 60_000);
     let appt: Appointment | undefined;
     try {
@@ -224,6 +230,9 @@ export async function createBooking(tx: Tx, businessId: string, input: CreateBoo
             notes: input.notes ?? null,
             internalNotes: input.internalNotes ?? null,
             priceCents: service.priceCents,
+            ...(deposit
+              ? { depositStatus: "required" as const, depositCents: deposit.cents, depositDueAt: depositDueAt(business, startsAt, input.now) }
+              : {}),
             createdByUserId: input.actor.type === "user" ? input.actor.userId : null,
             conversationId: input.conversationId ?? null,
           })
@@ -245,8 +254,9 @@ export async function createBooking(tx: Tx, businessId: string, input: CreateBoo
       entityId: appt.id,
       changes: { startsAt: appt.startsAt, staffId, serviceId: service.id, source: input.source, status, override },
     });
+    if (deposit) await createDepositHold(tx, appt, deposit, `Deposit ${depositReference(appt.id)}`);
     if (input.notifyCustomer !== false && appt.endsAt > new Date()) {
-      await enqueueNotification(tx, appt, status === "pending" ? "pending" : "confirmation");
+      await enqueueNotification(tx, appt, deposit ? "deposit_request" : status === "pending" ? "pending" : "confirmation");
       await scheduleReminders(tx, appt, business);
     }
     return appt;
@@ -484,6 +494,10 @@ export async function setAppointmentStatus(
       .update(customers)
       .set({ lastVisitAt: sql`greatest(coalesce(${customers.lastVisitAt}, 'epoch'::timestamptz), ${appt.startsAt.toISOString()}::timestamptz)` })
       .where(and(eq(customers.id, appt.customerId), eq(customers.businessId, businessId)));
+    // Growth: ask for a review a couple of hours after the visit, schedule the service's recall.
+    const business = await getBusiness(tx, businessId);
+    await scheduleReviewRequest(tx, business, updated!);
+    await scheduleRecall(tx, business, updated!);
   }
   if (status === "confirmed" && appt.status === "pending" && appt.startsAt > new Date()) {
     await enqueueNotification(tx, updated!, "confirmation");

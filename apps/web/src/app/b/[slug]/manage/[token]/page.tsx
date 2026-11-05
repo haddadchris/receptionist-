@@ -53,6 +53,9 @@ export default async function ManagePage({ params }: { params: Promise<{ slug: s
               staffId: appt.staffId,
               startsAt: appt.startsAt.toISOString(),
               status: appt.status,
+              depositStatus: appt.depositStatus,
+              depositCents: appt.depositCents,
+              depositDueAt: appt.depositDueAt?.toISOString() ?? null,
             }}
           />
         </div>

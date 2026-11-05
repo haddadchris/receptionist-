@@ -8,11 +8,11 @@
 import "./env";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { DateTime } from "luxon";
 import { closeDb } from "./client";
 import { withSystem, withTenant, type Tx } from "./tenant";
-import { appointments, businesses, plans, resources, services as servicesTable, subscriptions, usageEvents, users, type PlanTier } from "./schema";
+import { appointments, businesses, calls, campaigns, conversations, customers, jobs, messages, notifications, payments, plans, resources, reviewRequests, services as servicesTable, subscriptions, usageEvents, users, type PlanTier } from "./schema";
 import { createUser, findUserByEmail } from "../auth/users";
 import {
   addHoliday,
@@ -156,8 +156,15 @@ async function seedAppointments(opts: {
             notifyCustomer: false,
             now: longAgo,
           });
-          // Record the realistic channel the booking came from.
-          await tx.update(appointments).set({ source }).where(eq(appointments.id, appt.id));
+          // Record the realistic channel and when the booking was made (1–12 days before, any hour).
+          const madeAt = DateTime.fromISO(slot.start)
+            .minus({ days: 1 + Math.floor(rand() * 12) })
+            .set({ hour: 7 + Math.floor(rand() * 16), minute: Math.floor(rand() * 60) })
+            .toJSDate();
+          await tx
+            .update(appointments)
+            .set({ source, createdAt: madeAt.getTime() < Date.now() ? madeAt : new Date(Date.now() - Math.floor(rand() * 6 * 86_400_000)) })
+            .where(eq(appointments.id, appt.id));
           const r = rand();
           if (isPast) {
             if (r < 0.8) await setAppointmentStatus(tx, businessId, appt.id, "completed", { type: "system", label: "seed" });
@@ -247,6 +254,254 @@ async function seedBilling(businessId: string, opts: { aiMessages: number; voice
   });
 }
 
+/**
+ * Demo growth data: VIP tags + marketing consent, a deposit on whitening,
+ * rated reviews (incl. private feedback), recall reminders, campaigns, and one
+ * upcoming appointment waiting for its deposit. Written directly (no WhatsApp sends).
+ */
+async function seedGrowth(businessId: string, rand: () => number) {
+  const now = DateTime.now();
+  await withTenant(businessId, async (tx) => {
+    const custs = await tx.select().from(customers).where(eq(customers.businessId, businessId));
+    for (const [i, c] of custs.entries()) {
+      await tx
+        .update(customers)
+        .set({ consentMarketing: rand() < 0.65, tags: i % 8 === 0 ? ["VIP"] : i % 11 === 0 ? ["braces"] : c.tags })
+        .where(eq(customers.id, c.id));
+    }
+    await tx
+      .update(servicesTable)
+      .set({ depositRequired: true, depositCents: 5000 })
+      .where(and(eq(servicesTable.businessId, businessId), sql`${servicesTable.name}->>'en' = 'Teeth whitening'`));
+
+    // Reviews on recent completed visits.
+    const done = await tx
+      .select()
+      .from(appointments)
+      .where(and(eq(appointments.businessId, businessId), eq(appointments.status, "completed")))
+      .orderBy(desc(appointments.startsAt))
+      .limit(14);
+    const RATINGS: { rating: number; feedback?: string }[] = [
+      { rating: 5 },
+      { rating: 5 },
+      { rating: 4 },
+      { rating: 2, feedback: "Waited 35 minutes after my appointment time and nobody told me why." },
+      { rating: 5 },
+      { rating: 5 },
+      { rating: 3, feedback: "Dr. was great but parking was impossible, maybe add directions to the lot behind?" },
+      { rating: 4 },
+      { rating: 5 },
+    ];
+    const seenCustomers = new Set<string>();
+    let r = 0;
+    for (const a of done) {
+      if (r >= RATINGS.length || seenCustomers.has(a.customerId)) continue;
+      seenCustomers.add(a.customerId);
+      const spec = RATINGS[r++]!;
+      const sentAt = new Date(a.endsAt.getTime() + 2 * 3_600_000);
+      await tx.insert(reviewRequests).values({
+        businessId,
+        appointmentId: a.id,
+        customerId: a.customerId,
+        status: "rated",
+        rating: spec.rating,
+        feedback: spec.feedback ?? null,
+        sentAt,
+        respondedAt: new Date(sentAt.getTime() + 25 * 60_000),
+      });
+      const [cust] = custs.filter((c) => c.id === a.customerId);
+      await tx.insert(notifications).values({
+        businessId,
+        customerId: a.customerId,
+        appointmentId: a.id,
+        toAddress: cust!.phone,
+        templateName: "review_request",
+        language: "en",
+        body: "Thanks for visiting Demo Dental Clinic 🙏 How would you rate your experience from 1 to 5? Just reply with a number.",
+        status: "read",
+        sentAt,
+      });
+    }
+
+    // Recall reminders sent ~10 days ago, a couple of which rebooked.
+    for (const c of custs.slice(0, 6)) {
+      await tx.insert(notifications).values({
+        businessId,
+        customerId: c.id,
+        toAddress: c.phone,
+        templateName: "recall_reminder",
+        language: c.preferredLanguage ?? "ar",
+        body: "Hi 👋 It's time for your next Teeth cleaning at Demo Dental Clinic. Book here or just reply to this message.",
+        status: "delivered",
+        sentAt: now.minus({ days: 10 }).toJSDate(),
+        createdAt: now.minus({ days: 10 }).toJSDate(),
+      });
+    }
+
+    // Campaigns: one sent, one draft.
+    const [sent] = await tx
+      .insert(campaigns)
+      .values({
+        businessId,
+        name: "Back-to-school checkups",
+        segment: { noVisitDays: 180 },
+        templateName: "campaign_generic",
+        variables: { message: "Book your child's back-to-school checkup this month and get a free fluoride treatment." },
+        status: "sent",
+        scheduledAt: now.minus({ days: 20 }).toJSDate(),
+        sentAt: now.minus({ days: 20 }).toJSDate(),
+      })
+      .returning();
+    const optedIn = custs.filter((c) => c.consentMarketing).slice(0, 9);
+    for (const c of optedIn) {
+      await tx.insert(notifications).values({
+        businessId,
+        customerId: c.id,
+        campaignId: sent!.id,
+        toAddress: c.phone,
+        templateName: "campaign_generic",
+        language: c.preferredLanguage ?? "ar",
+        body: "Hi, a message from Demo Dental Clinic: Book your child's back-to-school checkup this month and get a free fluoride treatment. (reply STOP to opt out)",
+        status: "delivered",
+        sentAt: now.minus({ days: 20 }).toJSDate(),
+        createdAt: now.minus({ days: 20 }).toJSDate(),
+      });
+    }
+    await tx.update(campaigns).set({ recipientCount: optedIn.length, sentCount: optedIn.length }).where(eq(campaigns.id, sent!.id));
+    await tx.insert(campaigns).values({
+      businessId,
+      name: "Whitening offer",
+      segment: { tags: ["VIP"] },
+      templateName: "campaign_generic",
+      variables: { message: "As one of our VIP patients, enjoy 20% off teeth whitening until the end of the month." },
+      status: "draft",
+    });
+
+    // One upcoming appointment held for its deposit, one with a paid deposit.
+    const upcoming = await tx
+      .select()
+      .from(appointments)
+      .where(and(eq(appointments.businessId, businessId), eq(appointments.status, "confirmed"), sql`${appointments.startsAt} > now() + interval '1 day'`))
+      .orderBy(appointments.startsAt)
+      .limit(2);
+    if (upcoming[0]) {
+      const due = new Date(Math.min(Date.now() + 10 * 3_600_000, upcoming[0].startsAt.getTime() - 3_600_000));
+      await tx.update(appointments).set({ status: "pending", depositStatus: "required", depositCents: 5000, depositDueAt: due }).where(eq(appointments.id, upcoming[0].id));
+      await tx.insert(payments).values({ businessId, appointmentId: upcoming[0].id, kind: "deposit", amountCents: 5000, method: "other", provider: "manual", providerRef: `D-${upcoming[0].id.slice(0, 6).toUpperCase()}`, status: "pending" });
+    }
+    if (upcoming[1]) {
+      await tx.update(appointments).set({ depositStatus: "paid", depositCents: 5000 }).where(eq(appointments.id, upcoming[1].id));
+      await tx.insert(payments).values({ businessId, appointmentId: upcoming[1].id, kind: "deposit", amountCents: 5000, method: "wallet", provider: "manual", providerRef: "WHISH-48213", status: "succeeded" });
+    }
+  });
+  await cancelSeedGrowthJobs(businessId);
+}
+
+/** Seeded history must not trigger review/recall sends on the first `pnpm dev`. */
+async function cancelSeedGrowthJobs(businessId: string) {
+  await withSystem((tx) =>
+    tx
+      .update(jobs)
+      .set({ status: "cancelled" })
+      .where(and(eq(jobs.businessId, businessId), eq(jobs.status, "pending"), sql`${jobs.type} in ('review.request', 'recall.send') and ${jobs.runAt} < now() + interval '1 day'`)),
+  );
+}
+
+/** Demo channel history: WhatsApp conversations behind WhatsApp bookings, AI phone calls behind voice bookings. */
+async function seedChannelHistory(businessId: string, voiceNumber: string | null, rand: () => number) {
+  await withTenant(businessId, async (tx) => {
+    const rows = await tx
+      .select({ a: appointments, phone: customers.phone, name: customers.name, lang: customers.preferredLanguage, service: servicesTable.name })
+      .from(appointments)
+      .innerJoin(customers, eq(customers.id, appointments.customerId))
+      .innerJoin(servicesTable, eq(servicesTable.id, appointments.serviceId))
+      .where(and(eq(appointments.businessId, businessId), sql`${appointments.source} in ('whatsapp', 'voice')`))
+      .orderBy(desc(appointments.createdAt));
+    const convoByCustomer = new Map<string, string>();
+    let staffTouched = 0;
+    for (const r of rows) {
+      const at = r.a.createdAt;
+      const svc = r.service.en ?? Object.values(r.service)[0] ?? "appointment";
+      if (r.a.source === "voice") {
+        if (!voiceNumber) continue; // no AI phone line on this plan
+        const duration = 70 + Math.floor(rand() * 150);
+        await tx.insert(calls).values({
+          businessId,
+          customerId: r.a.customerId,
+          appointmentId: r.a.id,
+          provider: "twilio",
+          direction: "inbound",
+          fromNumber: r.phone,
+          toNumber: voiceNumber,
+          pipeline: "cascade",
+          startedAt: at,
+          endedAt: new Date(at.getTime() + duration * 1000),
+          durationSeconds: duration,
+          summary: `Caller booked ${svc}; read-back confirmed.`,
+          outcome: "booked",
+          transcript: [],
+          createdAt: at,
+        });
+        continue;
+      }
+      let convoId = convoByCustomer.get(r.a.customerId);
+      if (!convoId) {
+        const [c] = await tx
+          .insert(conversations)
+          .values({ businessId, customerId: r.a.customerId, channel: "whatsapp", externalId: r.phone, status: "closed", language: r.lang ?? "ar", lastMessageAt: new Date(at.getTime() + 40_000), lastInboundAt: at, createdAt: at })
+          .returning();
+        convoId = c!.id;
+        convoByCustomer.set(r.a.customerId, convoId);
+      }
+      await tx.insert(messages).values([
+        { businessId, conversationId: convoId, direction: "inbound", sender: "customer", body: `Marhaba, baddi e7joz ${svc}`, createdAt: at },
+        { businessId, conversationId: convoId, direction: "outbound", sender: "ai", body: `Tamem ✅ 7ajaztellak ${svc}. Ra7 yousalak ta2kid 3al WhatsApp.`, status: "read", createdAt: new Date(at.getTime() + 20_000) },
+      ]);
+      if (staffTouched < 4 && rand() < 0.2) {
+        staffTouched++;
+        await tx.insert(messages).values({ businessId, conversationId: convoId, direction: "outbound", sender: "staff", body: "Ahla w sahla! Shoufak 2arib 🙏", createdAt: new Date(at.getTime() + 600_000) });
+      }
+      await tx.update(appointments).set({ conversationId: convoId }).where(eq(appointments.id, r.a.id));
+    }
+    // Calls and chats that didn't end in a booking (questions, hang-ups).
+    const now = DateTime.now();
+    const QUESTIONS = ["adesh el tanzif?", "Do you have parking?", "شو الدوام نهار السبت؟", "Est-ce que vous prenez les assurances ?", "fi dr 3al sabt?", "How much is whitening?"];
+    for (const [i, q] of QUESTIONS.entries()) {
+      const at = now.minus({ days: 1 + Math.floor(rand() * 25), hours: Math.floor(rand() * 10) }).toJSDate();
+      const phone = `+96176${String(200000 + i * 7919).padStart(6, "0")}`;
+      const [cust] = await tx.insert(customers).values({ businessId, phone, name: null, source: "whatsapp", createdAt: at }).onConflictDoNothing().returning();
+      if (!cust) continue;
+      const [c] = await tx
+        .insert(conversations)
+        .values({ businessId, customerId: cust.id, channel: "whatsapp", externalId: phone, status: "closed", lastMessageAt: new Date(at.getTime() + 15_000), lastInboundAt: at, createdAt: at })
+        .returning();
+      await tx.insert(messages).values([
+        { businessId, conversationId: c!.id, direction: "inbound", sender: "customer", body: q, createdAt: at },
+        { businessId, conversationId: c!.id, direction: "outbound", sender: "ai", body: "Ahla! Hayda el jaweb 🙏 Baddak e7jozlak maw3ad?", status: "read", createdAt: new Date(at.getTime() + 15_000) },
+      ]);
+    }
+    for (let i = 0; voiceNumber && i < 9; i++) {
+      const at = now.minus({ days: Math.floor(rand() * 28), hours: Math.floor(rand() * 8) }).toJSDate();
+      const missed = i >= 6;
+      await tx.insert(calls).values({
+        businessId,
+        provider: "twilio",
+        direction: "inbound",
+        fromNumber: `+96170${String(100000 + Math.floor(rand() * 899999))}`,
+        toNumber: voiceNumber,
+        pipeline: "cascade",
+        startedAt: at,
+        endedAt: new Date(at.getTime() + (missed ? 6 : 60) * 1000),
+        durationSeconds: missed ? 6 : 60,
+        summary: missed ? "Caller hung up before speaking." : "Caller asked about prices and opening hours.",
+        outcome: missed ? "abandoned" : "info",
+        transcript: [],
+        createdAt: at,
+      });
+    }
+  });
+}
+
 async function seedDental(ownerId: string) {
   const existing = await withSystem((tx) => tx.select().from(businesses).where(eq(businesses.slug, DEMO.dentalSlug)));
   if (existing.length) return { businessId: existing[0]!.id, skipped: true };
@@ -321,6 +576,8 @@ async function seedDental(ownerId: string) {
   const customers = makeCustomers(32, rand);
   const n = await seedAppointments({ businessId: id, serviceIds, customers, perDay: 7, rand });
   await seedBilling(id, { aiMessages: 412, voiceMinutes: 96, openInvoice: false });
+  await seedGrowth(id, rand);
+  await seedChannelHistory(id, "+12025550147", rand);
   return { businessId: id, skipped: false, appointments: n };
 }
 
@@ -360,6 +617,8 @@ async function seedBarber(ownerId: string) {
   const serviceIds = (await withTenant(id, (tx) => tx.select({ id: servicesTable.id }).from(servicesTable))).map((s) => s.id);
   const n = await seedAppointments({ businessId: id, serviceIds, customers: makeCustomers(12, rand), perDay: 4, rand });
   await seedBilling(id, { aiMessages: 188, voiceMinutes: 0, openInvoice: true });
+  await seedChannelHistory(id, null, rand);
+  await cancelSeedGrowthJobs(id);
   return { businessId: id, skipped: false, appointments: n };
 }
 

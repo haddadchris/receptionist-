@@ -10,8 +10,8 @@ _Last updated: Phase 3 complete._
 | 2 | Standard tier — AI WhatsApp receptionist | ✅ Done |
 | 3 | Premium tier — AI voice receptionist (Lebanese Arabic) | ✅ Done |
 | 4 | Billing, plans, limits | ✅ Done |
-| 5 | Growth layer (CRM, deposits, reviews, recalls, analytics, campaigns) | ⏳ Next |
-| 6 | Marketing site + sales tools | ⏳ |
+| 5 | Growth layer (CRM, deposits, reviews, recalls, analytics, campaigns) | ✅ Done |
+| 6 | Marketing site + sales tools | ⏳ Next |
 | 7 | Hardening + handoff | ⏳ |
 
 ## Phase 1 — what's done
@@ -90,6 +90,20 @@ _Last updated: Phase 3 complete._
 - **Seed**: Demo Dental (Premium, active, last month paid, usage this month) and Demo Barber (Standard, active, last month paid, this month's invoice outstanding).
 - **Tests**: core 120 (adds `test/db/billing.test.ts`: tier gating, overage + hard cap, invoice lines, trial expiry → pause → first invoice → booking still works → pay → active, overdue pause, void, monthly idempotency, plan change rules, admin pricing, RLS on billing tables), e2e 15 (adds `billing.spec.ts`: owner billing page, Standard tier gating + upgrade request, admin issues invoice + marks paid with reference and receipt upload, plans page). Login rate limit is now 30/min per IP + 10/min per account (was 10/min per IP — tripped by clinics sharing one IP, and by the e2e suite).
 
+## Phase 5 — what's done
+
+- **CRM**: segment chips on Customers (All · VIP · No visit in 6 months · No-shows · Upcoming · Marketing opt-in) on top of search/tags; "Message this segment" jumps to a campaign. Customer page has a full **timeline** (`crm/timeline.ts`): bookings (source, status, price, deposit), status changes, WhatsApp/web conversations, calls, every message we sent (reminders, recalls, campaigns), ratings + private feedback, deposits, consent/opt-out.
+- **Deposits** (`booking/deposit-rules.ts`, `growth/deposits.ts`): required for services flagged "deposit", and for customers with ≥ N no-shows (setting; 0 = off; default amount = 30% of price rounded to $5, min $10). Public bookings (page, WhatsApp, web chat, phone) are held as **pending** with `deposit_due_at` (hold hours setting, never later than 1 h before the visit); a pending payment row + WhatsApp `deposit_request` (amount, business's own payment instructions or a payment link, deadline, reference `D-XXXXXX`). Staff mark **Deposit received** (method + reference) or **Waive** from the appointment sheet → confirmed + confirmation message. Unpaid holds auto-cancel (`deposit.expire` job) and free the slot. Staff bookings never require a deposit. The AI's `create_booking` result says `deposit_required` + amount + deadline and the prompt forbids calling it confirmed. Booking page and manage page show the deposit notice.
+- **Payment-link adapter**: `PAYMENTS_PROVIDER=mock_link` issues signed links to `/pay/mock/[token]` (demo page, "simulate payment", disabled in production unless `ALLOW_MOCK_PAYMENTS=true`). No real processor is faked.
+- **Reviews** (`growth/reviews.ts`): marking a visit **completed** schedules a rating request (2 h after the end, moved into 10:00–20:00; skipped for visits marked complete > 3 days late; max one ask per customer per 30 days). Replies are parsed **without the LLM** (`5`, `٤`, `4/5`, `⭐⭐⭐`): 4–5 → thanks + Google review link; 1–3 → apology + "what went wrong?", the next message is stored as **private feedback** (event in the inbox thread, list on Analytics, timeline). Works on any plan with reviews, even when AI is paused or staff took over.
+- **Recalls** (`growth/recalls.ts`): per-service `recall_interval_days` (Services editor). Completing a visit schedules a `recall_reminder` with a booking link pre-selecting the service; skipped if the customer has an upcoming appointment, a later visit for that service, or opted out.
+- **No-show reduction**: first reminder asks "reply 1 to confirm, 2 to reschedule" (setting); **"1" confirms and "2" sends the self-service reschedule link even on Basic (no AI)** — with AI, "2" starts the AI reschedule flow. No-show count per customer, segment, rate on Analytics, optional deposit for repeat no-shows.
+- **Campaigns** (`growth/campaigns.ts`, `/dashboard/campaigns`): broadcast the approved MARKETING template `campaign_generic` to a segment (6-month lapsed, VIP, no-shows, all opted-in, or a tag). Live audience preview ("X of Y can receive it"). Only customers with marketing consent who haven't opted out; every message says "reply STOP"; STOP/وقف opts out instantly. Send now or schedule; batched job (50 per run) with one notification row per recipient (unique per campaign → retries never double-send); sent counts; cancel.
+- **Analytics** (`growth/analytics.ts`, `/dashboard/analytics`, 7/30/90 days): hero "Booked by the AI" (+ value, + how many outside opening hours), new bookings, completed revenue (+ booked estimate), no-show rate, conversation → booking conversion, bookings per day (AI vs other, stacked), bookings by source, busiest hours heatmap (weekday × hour), AI-only vs staff-handled conversations, calls answered vs missed (+ booked by phone), reviews (avg, sent to Google), recalls (sent / rebooked), deposits (collected / expired), private feedback list. Dependency-free HTML/CSS charts following the data-viz rules (validated blue/orange categorical pair, single-hue sequential ramp, ≤ 24px bars, hover/focus tooltips, table view, RTL-safe).
+- **Shared sending path** (`notifications/customer.ts`): every template (reminders, deposits, reviews, recalls, campaigns) goes through one function: consent + marketing-consent checks, customer language, notification row, send, mirror into the WhatsApp thread, usage metering.
+- **Seed**: VIP tags, marketing consent, a $50 deposit on whitening, an appointment awaiting its deposit + one paid, 9 ratings incl. 2 private complaints, recalls, a sent + a draft campaign, WhatsApp conversations behind WhatsApp bookings, AI calls behind phone bookings, info-only chats and hang-ups; booking `created_at` spread realistically. Seeded history never triggers real sends on first `pnpm dev`.
+- **Tests**: core 134 (adds `test/db/growth.test.ts`, 14 tests: deposit hold → request message → paid/confirmed; expiry frees the slot; staff bookings skip deposits; waive; repeat no-show rule; AI tool says held-not-confirmed; rating parser; 4–5 → Google link; 1–3 → private feedback with AI paused; recall scheduling + skip when rebooked; campaign consent/once/STOP; Basic-tier "1"/"2" without AI; analytics; timeline). e2e 19 (adds `growth.spec.ts`: analytics, segments + timeline, campaign send through the worker, online deposit booking → staff marks received). E2E helper now logs in once per account (login is rate-limited per account). Evals still 46/46 (mock).
+
 ## What's mocked / needs keys
 
 | Area | Now | To go live |
@@ -101,6 +115,8 @@ _Last updated: Phase 3 complete._
 | Realtime / streaming STT | Not active without keys (browser text mode / `<Gather>` instead) | `OPENAI_API_KEY` (Realtime GA shapes verified from SDK types; untested live) |
 | TTS | None (browser speech synthesis in simulator) | `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` (Lebanese/Levantine voice) or OpenAI TTS. **Untested live** (elevenlabs.io unreachable here) |
 | Email (magic links) | Printed to server log / shown in dev | Use `AUTH_PROVIDER=supabase` (Supabase sends emails) |
+| Deposits | Business's own instructions (Whish/OMT/cash) + staff mark received; `mock_link` demo page | A real payment-link provider implementing `PaymentsProvider.createPaymentLink` + a webhook that calls `markDepositPaid` (none faked) |
+| WhatsApp templates | Rendered locally, sent through the mock | Submit the templates in `packages/core/src/notifications/templates.ts` (incl. `campaign_generic` MARKETING, `review_request`, `recall_reminder`, `deposit_request` UTILITY) for Meta approval in ar/en/fr with the same variable order |
 | Payments | Manual invoicing (admin marks paid) | Nothing required — this is the intended Lebanon flow. For card/wallet collection, implement `PaymentsProvider` for the chosen processor (none faked) |
 | Receipt storage | Local disk (`.data/uploads`) | `STORAGE_PROVIDER=supabase` + `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` + a private bucket (REST shape from docs; untested live) |
 | Rate limiting | In-memory per instance | Swap store for Redis/Upstash on multi-instance deploys (Phase 7) |
@@ -128,6 +144,10 @@ _Last updated: Phase 3 complete._
 - **Trial expiry pauses rather than downgrades**: AI stops, booking/reminders continue, and the first invoice is issued automatically so the owner sees exactly what to pay.
 - **Owner plan changes**: free switching during the trial; on paid subscriptions an upgrade/downgrade is a request the admin approves (pricing is often negotiated in Lebanon).
 - **Billing state is admin-only at the database level** (RLS + trigger), not just in the UI.
+- **Ratings and confirmations are parsed without the LLM** — cheap, instant, deterministic, and they work on Basic or with AI paused.
+- **Deposits hold the slot as `pending`** (it blocks double booking) instead of letting the customer "own" an unpaid slot; staff stay in control (mark received / waive), AI never marks payments.
+- **Campaign consent is opt-in** (marketing checkbox on booking, or staff toggle) — Meta requires it for MARKETING templates; recalls/reviews are service messages and only respect WhatsApp opt-out.
+- **Charts are plain HTML/CSS** (no chart library): small, server-rendered, RTL-friendly, accessible tooltips + table view.
 - **Invoices as printable HTML** (browser "Save as PDF") instead of a PDF library — boring and dependency-free.
 - Dashboard nav only shows sections that exist in the current build (`BUILT` set in `apps/web/src/lib/dashboard-data.ts`).
 
@@ -139,4 +159,4 @@ _Last updated: Phase 3 complete._
 
 ## Exact next step
 
-Phase 5 (growth layer): CRM segments + customer timeline, deposits (payment-link adapter + manual "deposit received" + auto-cancel unpaid holds), review requests after completed visits (4–5 → Google, 1–3 → private feedback), per-service recall rules, confirmation requests + no-show tracking + deposits for repeat no-shows, analytics dashboard (ROI), WhatsApp campaigns to segments with opt-out.
+Phase 6 (marketing site + sales tools): Arabic-first marketing site at `/` (en/fr) with hero, the missed-calls problem, how it works, the three tiers (from the plans table), FAQ and a "Book a demo" form that creates a lead; live demo page (chat with / call the Demo Dental agent, rate-limited); admin leads pipeline (lead → demo → trial → paying, notes); ROI calculator (missed calls/day × average appointment value → monthly lost revenue).

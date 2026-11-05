@@ -37,6 +37,7 @@ export function segmentConditions(businessId: string, seg: SegmentDefinition & {
     // Only customers who visited at least once before.
     conds.push(sql`exists (select 1 from ${appointments} a where a.customer_id = ${CID} and a.status = 'completed')`);
   }
+  if (seg.marketingOptIn) conds.push(sql`${customers.consentMarketing} and ${customers.optedOutAt} is null`);
   if (seg.hasUpcoming === true) conds.push(sql`${stats.upcoming} > 0`);
   if (seg.hasUpcoming === false) conds.push(sql`${stats.upcoming} = 0`);
   if (seg.serviceIds?.length) {

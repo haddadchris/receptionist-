@@ -6,7 +6,7 @@ import type { NavFeature } from "@/components/layout/dashboard-nav";
 import { hasFeature } from "@fekerte/core/billing/features";
 
 /** Dashboard sections that exist in this build (grows phase by phase). */
-const BUILT: Set<NavFeature> = new Set<NavFeature>(["inbox", "ai", "calls", "billing"]);
+const BUILT: Set<NavFeature> = new Set<NavFeature>(["inbox", "ai", "calls", "billing", "analytics", "campaigns"]);
 
 /** Which optional dashboard sections are visible for this business's plan. */
 export function enabledNavFeatures(business: Business): NavFeature[] {

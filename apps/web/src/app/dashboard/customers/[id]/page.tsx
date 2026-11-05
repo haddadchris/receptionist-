@@ -2,18 +2,20 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, MessageCircle, Phone } from "lucide-react";
 import { withTenant } from "@fekerte/core/db/tenant";
-import { customerConversations, getCustomer } from "@fekerte/core/crm/customers";
+import { getCustomer } from "@fekerte/core/crm/customers";
+import { customerTimeline } from "@fekerte/core/crm/timeline";
 import { listAppointments } from "@fekerte/core/booking/service";
 import { isDomainError } from "@fekerte/core/lib/errors";
 import { requireBusiness } from "@/lib/auth/current";
 import { getT } from "@/i18n/server";
 import { toApptDTO } from "@/lib/dto";
 import { Stat } from "@/components/ui/stat";
-import { Card, CardContent, CardHeader, CardTitle, Badge } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AppointmentList } from "@/components/appointments/appointment-list";
+import { CustomerTimeline } from "@/components/customers/timeline";
 import { CustomerEditor } from "@/components/customers/customer-editor";
-import { fmtDate, fmtDateTime } from "@/lib/format";
+import { fmtDate } from "@/lib/format";
 
 export default async function CustomerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -24,18 +26,16 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
   const data = await withTenant(ctx.business.id, async (tx) => {
     try {
       const customer = await getCustomer(tx, ctx.business.id, id);
-      const [appts, convos] = await Promise.all([
-        listAppointments(tx, ctx.business.id, { customerId: id, order: "desc", limit: 100 }),
-        customerConversations(tx, ctx.business.id, id),
-      ]);
-      return { customer, appts, convos };
+      const appts = await listAppointments(tx, ctx.business.id, { customerId: id, order: "desc", limit: 100 });
+      const timeline = await customerTimeline(tx, ctx.business.id, id);
+      return { customer, appts, timeline };
     } catch (e) {
       if (isDomainError(e) && e.code === "NOT_FOUND") return null;
       throw e;
     }
   });
   if (!data) notFound();
-  const { customer, appts, convos } = data;
+  const { customer, appts, timeline } = data;
 
   return (
     <div className="grid gap-5">
@@ -73,22 +73,10 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
         <section className="grid gap-3">
           <h2 className="font-semibold">{t("customers.history")}</h2>
           <AppointmentList appointments={appts.map((a) => toApptDTO(a, locale))} tz={tz} readOnly={ctx.readOnly} />
-          {convos.length ? (
-            <>
-              <h2 className="mt-2 font-semibold">{t("customers.conversations")}</h2>
-              <ul className="divide-y rounded-xl border bg-card">
-                {convos.map((c) => (
-                  <li key={c.id} className="flex items-center justify-between gap-2 p-3 text-sm">
-                    <span className="flex items-center gap-2">
-                      <Badge tone="outline">{t(`source.${c.channel}`)}</Badge>
-                      {c.summary ?? ""}
-                    </span>
-                    <span className="text-xs text-muted-foreground">{c.lastMessageAt ? fmtDateTime(c.lastMessageAt.toISOString(), tz, locale) : ""}</span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : null}
+          <h2 className="mt-2 font-semibold">{t("timeline.title")}</h2>
+          <div className="rounded-xl border bg-card p-4">
+            <CustomerTimeline items={timeline} t={t} tz={tz} locale={locale} />
+          </div>
         </section>
         <Card className="h-fit">
           <CardHeader>

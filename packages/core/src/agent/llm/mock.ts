@@ -280,6 +280,7 @@ export class MockLLMProvider implements LLMProvider {
         return reply(R.offer(l, a.service, a.slots, a.requested_date_full));
       }
       case "create_booking": {
+        if (out.ok && out.deposit_required) return reply(R.bookedDeposit(l, String(out.service), String(out.when), String(out.deposit), out.deposit_due ? String(out.deposit_due) : null));
         if (out.ok) return reply(R.booked(l, String(out.service), String(out.when), String(out.staff_name), out.status === "pending"));
         if (out.error === "need_name" || out.error === "need_phone") {
           const lastCall = [...req.messages].reverse().find((m) => m.role === "assistant" && m.toolCalls?.length);

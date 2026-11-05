@@ -1,0 +1,2 @@
+ALTER TABLE "notifications" ADD COLUMN "campaign_id" uuid;--> statement-breakpoint
+CREATE UNIQUE INDEX "notifications_campaign_customer_unique" ON "notifications" USING btree ("campaign_id","customer_id");

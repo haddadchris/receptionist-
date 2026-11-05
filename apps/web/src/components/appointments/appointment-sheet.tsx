@@ -4,16 +4,17 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { CalendarClock, Check, MessageCircle, Phone, UserX, X } from "lucide-react";
+import { BadgeDollarSign, CalendarClock, Check, MessageCircle, Phone, UserX, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox, Field, Input, Textarea } from "@/components/ui/form";
+import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/form";
 import { Badge } from "@/components/ui/card";
 import { StatusBadge } from "./status-badge";
 import { useI18n } from "@/i18n/client";
 import type { ApptDTO } from "@/lib/dto";
 import { fmtDate, fmtPrice, fmtTime, localClockOf, localDateOf, localToIso } from "@/lib/format";
 import { cancelAppointmentAction, moveAppointmentAction, setStatusAction } from "@/app/dashboard/actions";
+import { markDepositPaidAction, waiveDepositAction } from "@/app/dashboard/growth-actions";
 
 export function AppointmentSheet({
   appt,
@@ -31,11 +32,13 @@ export function AppointmentSheet({
   const { t, locale } = useI18n();
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [mode, setMode] = useState<"view" | "cancel" | "reschedule">("view");
+  const [mode, setMode] = useState<"view" | "cancel" | "reschedule" | "deposit">("view");
   const [reason, setReason] = useState("");
   const [notify, setNotify] = useState(true);
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
+  const [depMethod, setDepMethod] = useState<"cash" | "bank_transfer" | "wallet" | "card" | "other">("wallet");
+  const [depRef, setDepRef] = useState("");
 
   if (!appt) return null;
   const active = appt.status === "pending" || appt.status === "confirmed";
@@ -107,6 +110,22 @@ export function AppointmentSheet({
               {t("appointment.staff")}: <span className="text-foreground">{appt.staffName}</span>
             </p>
           </div>
+          {appt.depositStatus === "required" ? (
+            <div className="rounded-lg border border-warning/40 bg-warning/10 p-3" data-testid="deposit-box">
+              <p className="flex items-center gap-2 font-medium">
+                <BadgeDollarSign className="size-4" /> {t("deposit.required", { amount: fmtPrice(appt.depositCents) })}
+              </p>
+              {appt.depositDueAt ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("deposit.dueBy", { date: `${fmtDate(appt.depositDueAt, tz, locale)} ${fmtTime(appt.depositDueAt, tz, locale)}` })}
+                </p>
+              ) : null}
+            </div>
+          ) : appt.depositStatus === "paid" || appt.depositStatus === "waived" ? (
+            <Badge tone={appt.depositStatus === "paid" ? "success" : "muted"} className="w-fit">
+              {t(appt.depositStatus === "paid" ? "deposit.paid" : "deposit.waived")} · {fmtPrice(appt.depositCents)}
+            </Badge>
+          ) : null}
           {appt.notes ? (
             <p className="rounded-lg bg-muted p-3">
               <span className="block text-xs text-muted-foreground">{t("appointment.notes")}</span>
@@ -121,7 +140,36 @@ export function AppointmentSheet({
           ) : null}
         </div>
 
-        {readOnly ? null : mode === "cancel" ? (
+        {readOnly ? null : mode === "deposit" ? (
+          <div className="grid gap-3">
+            <div className="grid grid-cols-2 gap-2">
+              <Field label={t("deposit.method")} htmlFor="dep-method">
+                <Select id="dep-method" value={depMethod} onChange={(e) => setDepMethod(e.target.value as typeof depMethod)}>
+                  {(["wallet", "cash", "bank_transfer", "card", "other"] as const).map((m) => (
+                    <option key={m} value={m}>
+                      {t(`billing.methods.${m}`)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label={t("deposit.reference")} htmlFor="dep-ref">
+                <Input id="dep-ref" value={depRef} onChange={(e) => setDepRef(e.target.value)} maxLength={120} />
+              </Field>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setMode("view")}>
+                {t("common.back")}
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={pending}
+                onClick={() => run(() => markDepositPaidAction({ id: appt.id, method: depMethod, reference: depRef }), t("deposit.received"))}
+              >
+                <Check /> {t("deposit.markReceived")}
+              </Button>
+            </div>
+          </div>
+        ) : mode === "cancel" ? (
           <div className="grid gap-3">
             <Field label={t("appointment.cancelReason")}>
               <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
@@ -170,7 +218,17 @@ export function AppointmentSheet({
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
-            {appt.status === "pending" ? (
+            {appt.depositStatus === "required" && active ? (
+              <>
+                <Button onClick={() => setMode("deposit")}>
+                  <BadgeDollarSign /> {t("deposit.markReceived")}
+                </Button>
+                <Button variant="outline" disabled={pending} onClick={() => run(() => waiveDepositAction(appt.id), t("deposit.waivedDone"))}>
+                  {t("deposit.waive")}
+                </Button>
+              </>
+            ) : null}
+            {appt.status === "pending" && appt.depositStatus !== "required" ? (
               <Button disabled={pending} onClick={() => run(() => setStatusAction({ id: appt.id, status: "confirmed" }), t("appointment.updated"))}>
                 <Check /> {t("appointment.confirm")}
               </Button>

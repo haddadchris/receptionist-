@@ -90,6 +90,13 @@ export const R = {
           en: `Done ✅ You're booked for ${service} ${when} with ${staff}. You'll get a WhatsApp confirmation.`,
           fr: `C'est fait ✅ Rendez-vous ${service} ${when} avec ${staff}. Vous recevrez une confirmation WhatsApp.`,
         }),
+  bookedDeposit: (l: L, service: string, when: string, deposit: string, due: string | null) =>
+    pick(l, {
+      ar: `حجزتلك ${service} ${when} بشكل مبدئي. لتثبيت الموعد في عربون ${deposit}${due ? ` لازم يندفع قبل ${due}` : ""} — بعتتلك تفاصيل الدفع عالواتساب. بس يوصل العربون بيتأكّد الموعد ✅`,
+      arabizi: `7ajaztellak ${service} ${when} mabda2iyan. La tthabbit el maw3ad fi 3arboun ${deposit}${due ? ` lezem yendafa3 2abel ${due}` : ""} — ba3atellak tafasil el daf3 3al WhatsApp. Bas yousal el 3arboun byet2akkad ✅`,
+      en: `I've held ${service} ${when} for you. To secure it there's a ${deposit} deposit${due ? `, due by ${due}` : ""} — payment details are on their way on WhatsApp. Once it's received the appointment is confirmed ✅`,
+      fr: `J'ai réservé provisoirement ${service} ${when}. Pour le confirmer, un acompte de ${deposit} est demandé${due ? ` avant ${due}` : ""} — les détails de paiement arrivent sur WhatsApp. Dès réception, le rendez-vous est confirmé ✅`,
+    }),
   slotTaken: (l: L) =>
     pick(l, {
       ar: "عذراً، هالوقت انحجز هلّق. خليني شوفلك أوقات تانية…",

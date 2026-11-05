@@ -43,7 +43,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ slug: string }
       }),
     );
     return json(
-      { id: appt.id, status: appt.status, startsAt: appt.startsAt, endsAt: appt.endsAt, staffId: appt.staffId, manageUrl: manageUrl(business.slug, appt.id) },
+      {
+        id: appt.id,
+        status: appt.status,
+        startsAt: appt.startsAt,
+        endsAt: appt.endsAt,
+        staffId: appt.staffId,
+        manageUrl: manageUrl(business.slug, appt.id),
+        deposit: appt.depositStatus === "required" ? { cents: appt.depositCents, dueAt: appt.depositDueAt } : null,
+      },
       { status: 201, headers: CORS_HEADERS },
     );
   } catch (e) {

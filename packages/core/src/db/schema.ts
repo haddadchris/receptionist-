@@ -75,6 +75,8 @@ export type BookingSettings = {
   depositHoldHours: number;
   /** Require deposit for customers with at least this many no-shows (0 = off). */
   depositAfterNoShows: number;
+  /** How customers pay deposits (shown in the deposit request), e.g. "Whish to 70 123 456". */
+  depositInstructions?: string;
   policies?: LocalizedText;
 };
 
@@ -686,10 +688,17 @@ export const notifications = pgTable(
     status: notificationStatusEnum("status").notNull().default("queued"),
     providerMessageId: text("provider_message_id"),
     error: text("error"),
+    /** Set for campaign broadcasts (one row per recipient). */
+    campaignId: uuid("campaign_id"),
     sentAt: tstz("sent_at"),
     createdAt: createdAt(),
   },
-  (t) => [index().on(t.businessId, t.createdAt), index().on(t.appointmentId), index().on(t.providerMessageId)],
+  (t) => [
+    index().on(t.businessId, t.createdAt),
+    index().on(t.appointmentId),
+    index().on(t.providerMessageId),
+    uniqueIndex("notifications_campaign_customer_unique").on(t.campaignId, t.customerId),
+  ],
 );
 
 export const jobs = pgTable(
@@ -806,7 +815,8 @@ export const reviewRequests = pgTable(
     customerId: uuid("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
-    status: text("status").$type<"scheduled" | "sent" | "rated" | "expired">().notNull().default("scheduled"),
+    /** sent → rated (4–5) | feedback_pending (1–3, waiting for the customer's comment) → rated. */
+    status: text("status").$type<"scheduled" | "sent" | "feedback_pending" | "rated" | "expired">().notNull().default("scheduled"),
     rating: smallint("rating"),
     feedback: text("feedback"),
     sentAt: tstz("sent_at"),
@@ -822,6 +832,8 @@ export type SegmentDefinition = {
   minNoShows?: number;
   hasUpcoming?: boolean;
   serviceIds?: string[];
+  /** Only customers who accepted marketing messages and haven't opted out. */
+  marketingOptIn?: boolean;
 };
 
 export const campaigns = pgTable(

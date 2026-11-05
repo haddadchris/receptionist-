@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { CalendarClock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/i18n/client";
-import { fmtDate, fmtTime } from "@/lib/format";
+import { fmtDate, fmtPrice, fmtTime } from "@/lib/format";
 import { StatusBadge } from "@/components/appointments/status-badge";
 import { SlotPicker, type PublicSlot } from "./slot-picker";
 import type { AppointmentStatus } from "@fekerte/core/db/schema";
@@ -21,7 +21,17 @@ export function ManageAppointment({
   token: string;
   slug: string;
   tz: string;
-  appt: { serviceId: string; serviceName: string; staffName: string; staffId: string; startsAt: string; status: AppointmentStatus };
+  appt: {
+    serviceId: string;
+    serviceName: string;
+    staffName: string;
+    staffId: string;
+    startsAt: string;
+    status: AppointmentStatus;
+    depositStatus?: string;
+    depositCents?: number;
+    depositDueAt?: string | null;
+  };
   canChange: boolean;
 }) {
   const { t, locale } = useI18n();
@@ -63,6 +73,16 @@ export function ManageAppointment({
           </div>
           <StatusBadge status={appt.status} />
         </div>
+        {appt.depositStatus === "required" && active ? (
+          <p className="mt-3 rounded-lg bg-warning/15 p-2 text-sm" data-testid="manage-deposit">
+            {t("deposit.manageRequired", {
+              amount: fmtPrice(appt.depositCents ?? 0),
+              date: appt.depositDueAt ? `${fmtDate(appt.depositDueAt, tz, locale, { weekday: "short", day: "numeric", month: "short" })} ${fmtTime(appt.depositDueAt, tz, locale)}` : "",
+            })}
+          </p>
+        ) : appt.depositStatus === "paid" ? (
+          <p className="mt-3 text-sm text-success">{t("deposit.manageReceived")}</p>
+        ) : null}
       </div>
 
       {!active ? (

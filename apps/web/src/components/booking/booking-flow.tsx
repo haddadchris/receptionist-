@@ -51,7 +51,7 @@ export function BookingFlow({
   const [form, setForm] = useState({ name: "", phone: "", notes: "", marketing: false, website: "" });
   const [submitting, setSubmitting] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [result, setResult] = useState<{ status: string; manageUrl: string; staffId: string } | null>(null);
+  const [result, setResult] = useState<{ status: string; manageUrl: string; staffId: string; deposit: { cents: number; dueAt: string } | null } | null>(null);
 
   const pick = (x: LocalizedText) => x[locale] || x.en || x.ar || x.fr || "";
   const staffFor = (s: BookingService) => staff.filter((m) => s.staffIds.includes(m.id));
@@ -97,7 +97,7 @@ export function BookingFlow({
       });
       const data = await res.json();
       if (res.ok) {
-        setResult({ status: data.status, manageUrl: data.manageUrl, staffId: data.staffId });
+        setResult({ status: data.status, manageUrl: data.manageUrl, staffId: data.staffId, deposit: data.deposit ?? null });
         setStep("done");
       } else if (data.code === "SLOT_UNAVAILABLE") {
         toast.error(t("booking.slotTaken"));
@@ -135,7 +135,16 @@ export function BookingFlow({
           <Check className="size-8" />
         </div>
         <h2 className="text-xl font-semibold">{pending ? t("booking.pendingTitle") : t("booking.successTitle")}</h2>
-        <p className="text-sm text-muted-foreground">{pending ? t("booking.pendingText") : t("booking.successText")}</p>
+        {result.deposit ? (
+          <p className="rounded-xl border border-warning/40 bg-warning/10 p-3 text-sm" data-testid="deposit-notice">
+            {t("deposit.bookingHeld", {
+              amount: fmtPrice(result.deposit.cents),
+              date: `${fmtDate(result.deposit.dueAt, tz, locale, { weekday: "short", day: "numeric", month: "short" })} ${fmtTime(result.deposit.dueAt, tz, locale)}`,
+            })}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">{pending ? t("booking.pendingText") : t("booking.successText")}</p>
+        )}
         <div className="rounded-xl border bg-card p-4 text-start text-sm">
           <p className="font-medium">{pick(service.name)}</p>
           <p className="text-muted-foreground">

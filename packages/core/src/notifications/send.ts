@@ -1,20 +1,18 @@
 /**
  * Appointment notification job handler (confirmation, reminders, reschedule,
- * cancel). Renders the WhatsApp template in the customer's language and sends
- * it through the WhatsApp provider, recording everything in `notifications`.
+ * cancel, deposit request). Renders the WhatsApp template in the customer's
+ * language and sends it through `sendCustomerTemplate`.
  */
-import { and, eq } from "drizzle-orm";
+import { DateTime } from "luxon";
 import { withTenant } from "../db/tenant";
-import { customers, notifications, type Job, type Locale } from "../db/schema";
+import type { Job, Locale } from "../db/schema";
 import { getAppointmentView, type NotificationKind } from "../booking/service";
-import { getBusiness } from "../availability/loader";
 import { bookingUrl, manageUrl } from "../booking/tokens";
+import { depositInstructions, depositReference, pendingDepositPayment } from "../booking/deposit-rules";
 import { pickLocalized } from "../lib/i18n";
-import { formatDateTime } from "../lib/time";
-import { recordUsage } from "../lib/usage";
-import { getWhatsAppProvider } from "../providers";
-import { renderTemplate, type TemplateName } from "./templates";
-import { afterOutboundWhatsApp } from "./hooks";
+import { formatDateTime, formatPrice, formatTime } from "../lib/time";
+import type { TemplateName } from "./templates";
+import { sendCustomerTemplate } from "./customer";
 
 const NAME_FALLBACK: Record<Locale, string> = { ar: "", en: "there", fr: "" };
 
@@ -30,112 +28,53 @@ function templateFor(kind: NotificationKind, askConfirmation: boolean): Template
       return "appointment_rescheduled";
     case "cancelled":
       return "appointment_cancelled";
+    case "deposit_request":
+      return "deposit_request";
   }
 }
 
+const PAY_BY: Record<Locale, (t: string) => string> = {
+  ar: (t) => `بليز ادفع قبل ${t} وإلا بينلغى الحجز. الرقم المرجعي:`,
+  en: (t) => `Please pay before ${t}, otherwise the slot is released. Reference:`,
+  fr: (t) => `Merci de payer avant ${t}, sinon le créneau sera libéré. Référence :`,
+};
+
 export async function handleAppointmentNotification(job: Job): Promise<void | { skipped: string }> {
-  const payload = job.payload as {
-    appointmentId: string;
-    kind: NotificationKind;
-    expectedStartsAt?: string;
-    askConfirmation?: boolean;
-  };
+  const payload = job.payload as { appointmentId: string; kind: NotificationKind; expectedStartsAt?: string; askConfirmation?: boolean };
   const businessId = job.businessId;
   if (!businessId) return { skipped: "no business" };
 
-  const prepared = await withTenant(businessId, async (tx) => {
-    const appt = await getAppointmentView(tx, businessId, payload.appointmentId);
-    if (!appt) return { skip: "appointment not found" } as const;
-    if (payload.kind !== "cancelled") {
-      if (appt.status === "cancelled") return { skip: "appointment cancelled" } as const;
-      if (payload.expectedStartsAt && appt.startsAt.toISOString() !== payload.expectedStartsAt) {
-        return { skip: "appointment moved" } as const;
-      }
-      if (appt.startsAt.getTime() < Date.now()) return { skip: "appointment in the past" } as const;
-    }
-    const business = await getBusiness(tx, businessId);
-    const [customer] = await tx
-      .select()
-      .from(customers)
-      .where(and(eq(customers.id, appt.customerId), eq(customers.businessId, businessId)));
-    if (!customer) return { skip: "customer missing" } as const;
-
-    const locale: Locale = customer.preferredLanguage ?? business.defaultLanguage;
-    const template = templateFor(payload.kind, !!payload.askConfirmation);
-    const link = payload.kind === "cancelled" ? bookingUrl(business.slug) : manageUrl(business.slug, appt.id);
-    const variables = [
-      customer.name?.split(" ")[0] ?? NAME_FALLBACK[locale],
-      pickLocalized(appt.serviceName, locale),
-      business.name,
-      formatDateTime(appt.startsAt, business.timezone, locale),
-      link,
-    ];
-    const body = renderTemplate(template, locale, variables);
-    const optedOut = !customer.consentWhatsapp || !!customer.optedOutAt;
-    const [row] = await tx
-      .insert(notifications)
-      .values({
-        businessId,
-        customerId: customer.id,
-        appointmentId: appt.id,
-        channel: "whatsapp",
-        toAddress: customer.phone,
-        templateName: template,
-        language: locale,
-        variables,
-        body,
-        status: optedOut ? "skipped" : "queued",
-        error: optedOut ? "customer opted out of WhatsApp" : null,
-      })
-      .returning({ id: notifications.id });
-    if (optedOut) return { skip: "customer opted out" } as const;
-    return {
-      notificationId: row!.id,
-      to: customer.phone,
-      customerId: customer.id,
-      template,
-      locale,
-      variables,
-      body,
-      phoneNumberId: business.whatsappPhoneNumberId,
-      timezone: business.timezone,
-    };
-  });
-
-  if ("skip" in prepared) return { skipped: prepared.skip ?? "skipped" };
-
-  const provider = getWhatsAppProvider();
-  try {
-    const res = await provider.sendTemplate({
-      phoneNumberId: prepared.phoneNumberId,
-      to: prepared.to,
-      template: prepared.template,
-      locale: prepared.locale,
-      variables: prepared.variables,
-      renderedBody: prepared.body,
-    });
-    await withTenant(businessId, async (tx) => {
-      await tx
-        .update(notifications)
-        .set({ status: "sent", providerMessageId: res.providerMessageId, sentAt: new Date() })
-        .where(eq(notifications.id, prepared.notificationId));
-      await recordUsage(tx, businessId, "whatsapp_template", 1, { timezone: prepared.timezone, metadata: { template: prepared.template } });
-      await afterOutboundWhatsApp(tx, {
-        businessId,
-        customerId: prepared.customerId,
-        phone: prepared.to,
-        body: prepared.body,
-        providerMessageId: res.providerMessageId,
-        contentType: "template",
-      });
-    });
-  } catch (err) {
-    await withTenant(businessId, (tx) =>
-      tx
-        .update(notifications)
-        .set({ status: "failed", error: err instanceof Error ? err.message : String(err) })
-        .where(eq(notifications.id, prepared.notificationId)),
-    );
-    throw err;
+  const appt = await withTenant(businessId, (tx) => getAppointmentView(tx, businessId, payload.appointmentId));
+  if (!appt) return { skipped: "appointment not found" };
+  if (payload.kind !== "cancelled") {
+    if (appt.status === "cancelled") return { skipped: "appointment cancelled" };
+    if (payload.expectedStartsAt && appt.startsAt.toISOString() !== payload.expectedStartsAt) return { skipped: "appointment moved" };
+    if (appt.startsAt.getTime() < Date.now()) return { skipped: "appointment in the past" };
   }
+  if (payload.kind === "deposit_request" && appt.depositStatus !== "required") return { skipped: "deposit no longer required" };
+  const payment = payload.kind === "deposit_request" ? await withTenant(businessId, (tx) => pendingDepositPayment(tx, appt.id)) : null;
+
+  const template = templateFor(payload.kind, !!payload.askConfirmation);
+  const res = await sendCustomerTemplate({
+    businessId,
+    customerId: appt.customerId,
+    appointmentId: appt.id,
+    template,
+    variables: ({ locale, business, customer }) => {
+      const name = customer.name?.split(" ")[0] ?? NAME_FALLBACK[locale];
+      const service = pickLocalized(appt.serviceName, locale);
+      const when = formatDateTime(appt.startsAt, business.timezone, locale);
+      if (template === "deposit_request") {
+        const due = appt.depositDueAt ?? appt.startsAt;
+        const dueText = DateTime.fromJSDate(due).hasSame(DateTime.now(), "day")
+          ? formatTime(due, business.timezone, locale)
+          : formatDateTime(due, business.timezone, locale);
+        const how = payment?.paymentUrl ?? depositInstructions(business, locale);
+        return [name, formatPrice(appt.depositCents), service, when, `${how} ${PAY_BY[locale](dueText)} ${depositReference(appt.id)}`];
+      }
+      const link = payload.kind === "cancelled" ? bookingUrl(business.slug) : manageUrl(business.slug, appt.id);
+      return [name, service, business.name, when, link];
+    },
+  });
+  if (res.status === "skipped") return { skipped: res.reason ?? "skipped" };
 }

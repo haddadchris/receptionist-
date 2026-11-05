@@ -37,7 +37,7 @@ export class MockPaymentLinkProvider implements PaymentsProvider {
   readonly name = "mock_link";
   async createPaymentLink(input: { purpose: "invoice" | "deposit"; reference: string; amountCents: number }): Promise<PaymentLink> {
     return {
-      url: `${config.appUrl}/pay/mock?ref=${encodeURIComponent(input.reference)}&amount=${input.amountCents}`,
+      url: `${config.appUrl}/pay/mock/${encodeURIComponent(input.reference)}`,
       reference: input.reference,
       instructions: "Demo payment link (no money is charged).",
     };

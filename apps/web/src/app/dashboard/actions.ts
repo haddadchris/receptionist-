@@ -336,6 +336,7 @@ const settingsSchema = z.object({
     askConfirmation: z.boolean(),
     depositHoldHours: z.number().int().min(1).max(168),
     depositAfterNoShows: z.number().int().min(0).max(20),
+    depositInstructions: z.string().trim().max(300).optional(),
     policies: localized.optional(),
   }),
 });

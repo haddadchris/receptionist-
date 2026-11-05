@@ -225,6 +225,25 @@ export function SettingsForm({ initial, appUrl, readOnly }: { initial: SettingsV
         </CardContent>
       </Card>
 
+      <Card className="h-fit">
+        <CardHeader>
+          <CardTitle>{t("deposit.title")}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t("deposit.holdHours")}>
+              <Input type="number" min={1} max={168} value={bs.depositHoldHours} onChange={(e) => setB("depositHoldHours", Math.max(1, Number(e.target.value)))} />
+            </Field>
+            <Field label={t("deposit.afterNoShows")}>
+              <Input type="number" min={0} max={20} value={bs.depositAfterNoShows} onChange={(e) => setB("depositAfterNoShows", Math.max(0, Number(e.target.value)))} />
+            </Field>
+          </div>
+          <Field label={t("deposit.instructions")} hint={t("deposit.instructionsHint")}>
+            <Textarea rows={2} maxLength={300} value={bs.depositInstructions ?? ""} onChange={(e) => setB("depositInstructions", e.target.value)} />
+          </Field>
+        </CardContent>
+      </Card>
+
       {!readOnly ? (
         <div className="sticky bottom-20 z-10 md:bottom-4 lg:col-span-2">
           <Button size="lg" onClick={save} disabled={pending} className="w-full shadow-lg sm:w-auto">
