@@ -1,0 +1,25 @@
+# Fly.io config for the voice server. Deploy from the REPO ROOT (build context = whole monorepo):
+#   fly launch --no-deploy --copy-config --config apps/voice/fly.toml     (first time)
+#   fly deploy --config apps/voice/fly.toml --dockerfile apps/voice/Dockerfile
+# Written from Fly's documented fly.toml format — verify keys against current docs.
+app = "fekerte-voice"
+primary_region = "fra"   # closest well-connected region to Lebanon (also consider "otp")
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Calls are long-lived WebSockets: keep one machine always running.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"

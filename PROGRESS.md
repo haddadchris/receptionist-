@@ -1,6 +1,6 @@
 # Fekerte — build progress
 
-_Last updated: Phase 3 complete._
+_Last updated: all 7 phases complete (handoff)._
 
 ## Status by phase
 
@@ -12,7 +12,57 @@ _Last updated: Phase 3 complete._
 | 4 | Billing, plans, limits | ✅ Done |
 | 5 | Growth layer (CRM, deposits, reviews, recalls, analytics, campaigns) | ✅ Done |
 | 6 | Marketing site + sales tools | ✅ Done |
-| 7 | Hardening + handoff | ⏳ Next |
+| 7 | Hardening + handoff | ✅ Done |
+
+**Verified at handoff** (all from a clean `pnpm dev` stack): typecheck ✅ · lint ✅ · unit + integration tests **180/180** (core 172, voice 5, web 3) · Playwright **22/22** (desktop + mobile) · evals **49/49** with the mock LLM · `next build` ✅ · production-mode smoke test (`next start`) ✅.
+
+## Production readiness at a glance
+
+| Area | State |
+|---|---|
+| Booking engine, calendar, double-booking protection, reminders, manage links | **Production-ready** (tested incl. concurrency + DST) |
+| Multi-tenancy (RLS), auth (local or Supabase), roles, super admin, impersonation | **Production-ready** |
+| Dashboard, onboarding, booking page (ar/en/fr, RTL, mobile) | **Production-ready** |
+| Billing (plans, limits, manual invoices, trial/overdue pausing) | **Production-ready** for manual (bank / cash / Whish-OMT) billing |
+| Growth (CRM, deposits, reviews, recalls, campaigns, analytics) | **Production-ready** logic; WhatsApp sends need Meta + approved templates |
+| Marketing site, live demo, leads pipeline, ROI calculator | **Production-ready** |
+| Security hardening (RLS tests, signatures, rate limits, guard, headers) | **Done**, see Phase 7 |
+| AI agent (tools, prompts, guard, evals) | Logic **ready**; quality only proven with the **mock** — run `EVAL_PROVIDER=anthropic pnpm eval` with a real key before go-live |
+| WhatsApp Cloud API adapter | **Written, unit-tested, never run against live Meta** |
+| Twilio voice + OpenAI Realtime / transcription + ElevenLabs | **Written, unit-tested with stubs, never run against the live services** |
+| Supabase Storage (receipts), Sentry reporting | Written from documented REST/envelope shapes, **untested live** |
+| Deploy configs (`apps/voice/Dockerfile`, `fly.toml`, `railway.json`, `apps/web/vercel.json`) | Written from vendor docs; **not deployed from here** (no Docker / cloud access in this environment) |
+
+Vendor documentation hosts (developers.facebook.com, twilio.com, platform.openai.com, elevenlabs.io) were unreachable from the build environment; shapes were taken from SDK type definitions and web search where possible and are marked "verify" in code comments.
+
+## What to buy / sign up for
+
+| Need | Service | Notes |
+|---|---|---|
+| Database (+ optional auth, storage) | **Supabase** project (Frankfurt) | Paid plan recommended for daily backups / no pausing |
+| Web hosting | **Vercel** (Pro if you want the per-minute cron; Hobby works because the voice worker drains jobs) | Root directory `apps/web` |
+| Voice server hosting | **Railway** or **Fly.io** (1 always-on small machine) | Needs long-lived WebSockets |
+| AI | **Anthropic API** key (Claude) | Default model `claude-opus-5-5`, effort `low` |
+| WhatsApp | **Meta Business** account (verified), WhatsApp Business Platform app, a phone number not used in the WhatsApp app | Template approval takes from minutes to days |
+| Phone | **Twilio** account + 1 voice number per clinic | Clinic forwards its Lebanese line to it (Alfa / touch / Ogero call forwarding) |
+| Natural Lebanese voice | **OpenAI API** (streaming transcription / realtime) + **ElevenLabs** (Levantine voice) | Without them the phone line still works with Twilio's `<Gather>` + `<Say>` |
+| Error tracking (optional) | **Sentry** project | Just `SENTRY_DSN` |
+| Domain | e.g. `fekerte.app` + `voice.fekerte.app` | HTTPS for both (Twilio and Meta require it) |
+
+Check each vendor's current pricing; nothing in the code depends on a specific tier.
+
+## Exact steps to put the first clinic live
+
+1. **Accounts**: create everything in the table above. Generate `APP_SECRET` (`openssl rand -hex 32`) and `CRON_SECRET`.
+2. **Database**: `DATABASE_URL=<supabase session pooler> pnpm db:migrate`, then set real `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD` and `pnpm db:seed` (plans + super admin + demo clinics for `/demo`).
+3. **Deploy web** to Vercel (root `apps/web`) with the env vars from README → Deploying. Check `/api/health`.
+4. **Deploy voice** to Railway/Fly with the same `DATABASE_URL` and `APP_SECRET`. Check `https://voice…/health`.
+5. **Claude**: set `ANTHROPIC_API_KEY` on both apps; run `EVAL_PROVIDER=anthropic pnpm eval` locally against a scratch DB; fix any failing scenario (prompt tweaks in `packages/core/src/agent/prompt.ts`) until ≥ 90 %.
+6. **WhatsApp**: Meta app → system-user token, app secret, verify token; webhook `https://<web>/api/webhooks/whatsapp` subscribed to `messages`; submit the templates from `packages/core/src/notifications/templates.ts` (ar/en/fr); set `WHATSAPP_PROVIDER=meta`. Send yourself a message and check the inbox.
+7. **Phone**: Twilio number → `https://<voice>/twilio/voice` (+ status `/twilio/status`); set `TWILIO_*`, `VOICE_PUBLIC_URL`, `OPENAI_API_KEY`, `ELEVENLABS_*`. Run the live-call checklist (Phase 3 section).
+8. **Onboard the clinic** (README → Onboarding a real business): account, services/prices, staff, hours, holidays, booking rules, AI persona; put their WhatsApp phone-number ID and Twilio number in AI settings; set call forwarding at their carrier ("on no answer" first, "always" once they trust it).
+9. **Billing**: in Admin set the plan and negotiated fees, issue the first invoice, mark it paid with the transfer reference.
+10. **First week**: watch Inbox, Calls and the audit trail daily; check Analytics → "Booked by the AI"; tune the persona's extra information from real questions.
 
 ## Phase 1 — what's done
 
@@ -112,6 +162,22 @@ _Last updated: Phase 3 complete._
 - **Seed**: 6 demo leads across stages.
 - **Tests**: core 138 (adds `test/db/leads.test.ts`: normalize + merge repeats, validation, pipeline notes, RLS), e2e 22 (adds `marketing.spec.ts`: Arabic RTL home with DB pricing, ROI maths, FAQ, demo request → admin board → stage change, live demo chat + public demo call).
 
+## Phase 7 — what's done
+
+- **RLS verified with tests**: every public table has RLS enabled; every tenant table is isolated for reads, writes, deletes and "moving" rows to another tenant; billing tables read-only for tenants; leads super-admin-only; plan/status/trial/flags changeable only by super admins (trigger).
+- **Prompt-injection guard** (`packages/core/src/agent/guard.ts`), independent of the model: multilingual detection (ar / arabizi / en / fr) → security note in the turn's prompt + audit (`ai.injection_attempt`); **output filter** that replaces any reply containing a phone number or e-mail that isn't the business's or the verified customer's (`ai.reply_redacted`). Tests (`test/db/security.test.ts`) use a **deliberately malicious scripted model** and prove: no other customer's contact data leaves the system; strict tool schemas reject attacker-chosen fields (`customer_phone`, `price`); appointment tools only touch the verified caller's bookings; prices always come from the DB; the cancellation window holds; invalid tool input is rejected. 3 new injection evals (Arabic, Arabizi, French).
+- **Privacy fix found in the pass**: web chat used to look up the customer record by a *typed* (unverified) phone number, which would have let the AI greet someone by the name on that number. Only channel-verified phones (WhatsApp sender, caller ID) unlock customer details now.
+- **Rate limiting**: shared **Postgres** store (UNLOGGED `rate_limits` table, fail-open to memory) used automatically in production — works on serverless/multi-instance; login per IP + per account, public booking/slots/chat/manage APIs, demo requests and demo calls. **AI caps**: per-conversation hourly AI reply cap on WhatsApp and web chat (then handed to staff with a polite message) and per-caller hourly AI call cap (then ring the business / voicemail).
+- **Webhooks**: Meta `X-Hub-Signature-256` and Twilio `X-Twilio-Signature` verified (unsigned requests rejected in production; mock WhatsApp webhook disabled in production — verified with `next start`); Twilio media-stream WebSockets now require a signed parameter.
+- **Headers**: `X-Frame-Options: DENY` + `frame-ancestors 'none'` except the embeddable `/chat/*`, HSTS in production, nosniff, referrer and permissions policies.
+- **Input validation**: every API route and server action validates with Zod; tool inputs use strict schemas.
+- **Secrets**: only in env; `.env` git-ignored; secret scan clean; `APP_SECRET` length enforced in production.
+- **Observability**: structured JSON logs everywhere; **Sentry-ready** reporting without an SDK (`lib/error-reporting.ts`, envelope endpoint, customer content stripped) wired to `logger.error`, Next.js `instrumentation.ts` (`onRequestError`) and the voice server's error handler + unhandled rejections.
+- **Health checks**: `/api/health` (web) and `/health` (voice) report DB status + latency, job-queue lag (degraded past `HEALTH_MAX_JOB_LAG_SECONDS`), failed jobs in 24 h, version; voice adds active calls and which providers are configured. 503 when the DB is down.
+- **Deploy configs**: `apps/voice/Dockerfile`, `apps/voice/fly.toml`, `railway.json`, `apps/web/vercel.json` (cron). `next build` verified.
+- **Docs**: full `README.md` (what it is, Mermaid architecture, quick start in 4 commands after cloning, every env var, connecting Claude / WhatsApp / Twilio + Lebanese forwarding / OpenAI / ElevenLabs / Supabase / Sentry, deploy guide Supabase + Vercel + Railway/Fly, onboarding a real business, security model, troubleshooting). Complete `.env.example`.
+- **Tests**: core 172 (adds guard, security, hardening, rate-limit/AI-cap suites), voice 5, web 3; e2e 22; evals 49/49.
+
 ## What's mocked / needs keys
 
 | Area | Now | To go live |
@@ -127,7 +193,8 @@ _Last updated: Phase 3 complete._
 | WhatsApp templates | Rendered locally, sent through the mock | Submit the templates in `packages/core/src/notifications/templates.ts` (incl. `campaign_generic` MARKETING, `review_request`, `recall_reminder`, `deposit_request` UTILITY) for Meta approval in ar/en/fr with the same variable order |
 | Payments | Manual invoicing (admin marks paid) | Nothing required — this is the intended Lebanon flow. For card/wallet collection, implement `PaymentsProvider` for the chosen processor (none faked) |
 | Receipt storage | Local disk (`.data/uploads`) | `STORAGE_PROVIDER=supabase` + `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` + a private bucket (REST shape from docs; untested live) |
-| Rate limiting | In-memory per instance | Swap store for Redis/Upstash on multi-instance deploys (Phase 7) |
+| Rate limiting | In-memory in dev, shared Postgres store in production | Nothing — works on Vercel/multi-instance as is |
+| Error tracking | Structured logs to stdout | `SENTRY_DSN` (envelope sender, untested live) or the official SDK via `setErrorHook` |
 
 ## Decisions
 
@@ -165,8 +232,13 @@ _Last updated: Phase 3 complete._
 
 - Calendar drag on touch devices uses `touch-action: none` on appointment blocks (empty grid still scrolls); on phones, rescheduling via the appointment sheet is the main path.
 - Week view with "all staff" shows overlapping appointments in lanes; text truncates when 3+ overlap.
-- Staff role users currently see the same dashboard as owners (owner-only actions are refused server-side).
+- Staff role users currently see the same dashboard as owners (owner-only actions are refused server-side; the Billing page refuses staff, though its nav item is still shown).
+- **Dev only**: if `next dev` is killed abruptly (e.g. container restart), Turbopack's persistent dev cache can make pages reload endlessly ("HMR hash mismatch"). `pnpm clean:next` and restart fixes it. A graceful stop/start does not trigger it (verified).
+- The voice-server Docker image, Fly/Railway configs and Vercel cron were written from vendor docs but not deployed from this environment.
+- Caller ID is used as the phone identity on calls; it can be spoofed (as with any phone line). Changes to existing bookings by phone are limited to that caller's own appointments and still follow the cancellation window.
+- Real-LLM conversation quality is unmeasured here (no API key in this environment); the mock passes 49/49 but was built alongside the scenarios.
+- Meta template approval is manual; until approved, reminders/reviews/recalls/campaigns can't be sent to customers who haven't messaged in the last 24 h.
 
 ## Exact next step
 
-Phase 7 (hardening + handoff): security pass (RLS verification tests across every tenant table, webhook signature checks, rate limits on public + AI endpoints, input validation, secrets only in env), Sentry-ready error hooks + structured logging, health checks for web + voice, prompt-injection guard + tests, full README (Mermaid architecture, <10-command setup, every env var, connecting real WhatsApp/telephony/voice/LLM, deploy guide Vercel + Railway/Fly + Supabase, onboarding a real business), complete `.env.example`, final PROGRESS.md.
+Follow **"Exact steps to put the first clinic live"** at the top of this file. The first concrete action: get an Anthropic API key and run `EVAL_PROVIDER=anthropic pnpm eval` to measure the real model on the 49 scenarios.

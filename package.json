@@ -18,7 +18,8 @@
     "db:generate": "pnpm --filter @fekerte/core db:generate",
     "db:migrate": "pnpm --filter @fekerte/core db:migrate",
     "db:seed": "pnpm --filter @fekerte/core db:seed",
-    "db:reset": "pnpm --filter @fekerte/core db:reset"
+    "db:reset": "pnpm --filter @fekerte/core db:reset",
+    "clean:next": "node -e \"require('fs').rmSync('apps/web/.next',{recursive:true,force:true})\""
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
