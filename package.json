@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "pnpm db:ensure && concurrently -k -n web,voice,cron -c blue,magenta,gray \"pnpm --filter @fekerte/web dev\" \"pnpm --filter @fekerte/voice dev\" \"tsx scripts/dev-cron.ts\"",
+    "dev": "pnpm db:ensure && concurrently -k -n web,cron -c blue,gray \"pnpm --filter @fekerte/web dev\" \"tsx scripts/dev-cron.ts\"",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",

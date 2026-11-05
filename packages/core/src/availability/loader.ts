@@ -220,3 +220,46 @@ export async function loadAvailability(tx: Tx, businessId: string, opts: LoadOpt
   };
   return { input, business, service, staff: staffList };
 }
+
+/** All active staff with their hours/breaks/time off/holidays — for calendar shading. */
+export async function loadCalendarInput(tx: Tx, businessId: string, fromDate: string, toDate: string): Promise<AvailabilityInput> {
+  const business = await getBusiness(tx, businessId);
+  const staffList = await tx
+    .select()
+    .from(staff)
+    .where(and(eq(staff.businessId, businessId), eq(staff.active, true)))
+    .orderBy(staff.sortOrder, staff.name);
+  const tz = business.timezone;
+  const windowStart = DateTime.fromISO(fromDate, { zone: tz }).minus({ days: 1 }).toJSDate();
+  const windowEnd = DateTime.fromISO(toDate, { zone: tz }).plus({ days: 2 }).toJSDate();
+  const [hours, brks, offs, hols] = await Promise.all([
+    tx.select().from(workingHours).where(eq(workingHours.businessId, businessId)),
+    tx.select().from(breaks).where(eq(breaks.businessId, businessId)),
+    tx
+      .select()
+      .from(timeOff)
+      .where(and(eq(timeOff.businessId, businessId), lt(timeOff.startsAt, windowEnd), gt(timeOff.endsAt, windowStart))),
+    tx
+      .select()
+      .from(holidays)
+      .where(and(eq(holidays.businessId, businessId), lte(holidays.startDate, toDate), gte(holidays.endDate, fromDate))),
+  ]);
+  return {
+    timezone: tz,
+    service: { durationMinutes: 15, bufferBeforeMinutes: 0, bufferAfterMinutes: 0 },
+    staff: staffList.map((s) => ({
+      id: s.id,
+      sortOrder: s.sortOrder,
+      workingHours: hours.filter((h) => h.staffId === s.id).map(rule),
+      breaks: brks.filter((b) => b.staffId === s.id).map(rule),
+      timeOff: offs.filter((o) => o.staffId === s.id).map((o) => ({ start: o.startsAt, end: o.endsAt })),
+      holidays: hols.filter((h) => h.staffId === s.id).map((h) => ({ startDate: h.startDate, endDate: h.endDate })),
+    })),
+    businessHours: hours.filter((h) => h.staffId === null).map(rule),
+    businessBreaks: brks.filter((b) => b.staffId === null).map(rule),
+    businessHolidays: hols.filter((h) => h.staffId === null).map((h) => ({ startDate: h.startDate, endDate: h.endDate })),
+    appointments: [],
+    rules: { minNoticeMinutes: 0, maxDaysAhead: 3660, slotGranularityMinutes: 15 },
+    now: new Date(0),
+  };
+}

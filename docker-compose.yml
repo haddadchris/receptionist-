@@ -1,0 +1,23 @@
+# Local Postgres for development (Supabase-compatible: Postgres 16 + btree_gist).
+# `pnpm dev` starts it automatically when DATABASE_URL is unreachable.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fekerte
+      POSTGRES_PASSWORD: fekerte
+      POSTGRES_DB: fekerte
+    ports:
+      - "5432:5432"
+    volumes:
+      - fekerte-pg:/var/lib/postgresql/data
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fekerte"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  fekerte-pg:

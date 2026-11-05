@@ -344,3 +344,17 @@ export function checkSlot(
 export function pickStaff(slot: Slot): string | undefined {
   return slot.staffIds[0];
 }
+
+/**
+ * Free working windows (after breaks, time off and holidays) per staff member for
+ * one local date. Used by the dashboard calendar to shade non-working time.
+ */
+export function workingWindows(input: AvailabilityInput, date: string): Record<string, { start: string; end: string }[]> {
+  const p = prepare(input);
+  const day = buildDay(p, date);
+  const out: Record<string, { start: string; end: string }[]> = {};
+  for (const s of input.staff) {
+    out[s.id] = (day.freeWindows.get(s.id) ?? []).map(([a, b]) => ({ start: new Date(a).toISOString(), end: new Date(b).toISOString() }));
+  }
+  return out;
+}
