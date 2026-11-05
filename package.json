@@ -1,0 +1,31 @@
+{
+  "name": "fekerte",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm db:ensure && concurrently -k -n web,voice,cron -c blue,magenta,gray \"pnpm --filter @fekerte/web dev\" \"pnpm --filter @fekerte/voice dev\" \"tsx scripts/dev-cron.ts\"",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @fekerte/web test:e2e",
+    "eval": "pnpm --filter @fekerte/core eval",
+    "db:ensure": "tsx scripts/db-ensure.ts",
+    "db:generate": "pnpm --filter @fekerte/core db:generate",
+    "db:migrate": "pnpm --filter @fekerte/core db:migrate",
+    "db:seed": "pnpm --filter @fekerte/core db:seed",
+    "db:reset": "pnpm --filter @fekerte/core db:reset"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "concurrently": "^9.2.1",
+    "dotenv": "^17.2.3",
+    "postgres": "^3.4.9",
+    "tsx": "^4.20.6",
+    "typescript": "5.9.3"
+  }
+}
