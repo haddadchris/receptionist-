@@ -19,3 +19,18 @@ export function hasFeature(business: Pick<Business, "planTier" | "featureFlags">
   if (typeof override === "boolean") return override;
   return TIER_FEATURES[business.planTier].includes(feature);
 }
+
+/**
+ * Why AI features are unavailable right now, or null if allowed.
+ * The booking page keeps working regardless (Phase 4 adds usage limits).
+ */
+export function aiBlockedReason(
+  business: Pick<Business, "planTier" | "featureFlags" | "status" | "trialEndsAt">,
+  feature: "whatsappAi" | "voiceAi" | "webChat",
+  now: Date = new Date(),
+): "plan" | "paused" | "trial_expired" | null {
+  if (!hasFeature(business, feature)) return "plan";
+  if (business.status === "paused" || business.status === "cancelled") return "paused";
+  if (business.status === "trial" && business.trialEndsAt && business.trialEndsAt < now) return "trial_expired";
+  return null;
+}

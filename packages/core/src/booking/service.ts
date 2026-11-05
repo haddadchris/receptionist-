@@ -316,8 +316,9 @@ async function getAppointmentRow(tx: Tx, businessId: string, id: string): Promis
   return row;
 }
 
+/** Online changes by customers (directly or through the AI agent) must respect the notice window. */
 function assertCustomerNotice(appt: Appointment, business: Business, actor: Actor, now = new Date()) {
-  if (actor.type !== "customer") return;
+  if (actor.type !== "customer" && actor.type !== "ai") return;
   const hours = bookingSettings(business).cancellationNoticeHours;
   if (appt.startsAt.getTime() - now.getTime() < hours * 3_600_000) {
     throw new DomainError("TOO_LATE", `Changes must be made at least ${hours}h before the appointment`, { hours });
@@ -426,7 +427,7 @@ export async function cancelBooking(
   if (appt.status !== "pending" && appt.status !== "confirmed") {
     throw new DomainError("CONFLICT", `Cannot cancel a ${appt.status} appointment`);
   }
-  if (input.actor.type === "customer") {
+  if (input.actor.type === "customer" || input.actor.type === "ai") {
     const { getBusiness } = await import("../availability/loader");
     assertCustomerNotice(appt, input.business ?? (await getBusiness(tx, businessId)), input.actor, input.now);
   }

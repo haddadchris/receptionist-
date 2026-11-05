@@ -15,6 +15,13 @@
       "when": 1793856330036,
       "tag": "0001_rls_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793859486705,
+      "tag": "0002_agent_state",
+      "breakpoints": true
     }
   ]
 }

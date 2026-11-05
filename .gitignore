@@ -14,3 +14,4 @@ playwright-report
 *.tsbuildinfo
 next-env.d.ts
 apps/web/public/uploads
+.eval-report.json

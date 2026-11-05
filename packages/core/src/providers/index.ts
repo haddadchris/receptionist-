@@ -4,6 +4,7 @@
  * whole app runs locally with zero paid API keys.
  */
 import { MockWhatsAppProvider } from "./whatsapp/mock";
+import { MetaWhatsAppProvider } from "./whatsapp/meta";
 import type { WhatsAppProvider } from "./whatsapp/types";
 
 type Registry = { whatsapp?: WhatsAppProvider };
@@ -18,6 +19,9 @@ export function getWhatsAppProvider(): WhatsAppProvider {
     switch (kind) {
       case "mock":
         r.whatsapp = new MockWhatsAppProvider();
+        break;
+      case "meta":
+        r.whatsapp = new MetaWhatsAppProvider();
         break;
       default:
         throw new Error(`Unknown WHATSAPP_PROVIDER "${kind}"`);

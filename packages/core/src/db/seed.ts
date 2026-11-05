@@ -11,7 +11,7 @@ import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { DateTime } from "luxon";
 import { closeDb } from "./client";
-import { withSystem, withTenant } from "./tenant";
+import { withSystem, withTenant, type Tx } from "./tenant";
 import { appointments, businesses, plans, resources, services as servicesTable, users, type PlanTier } from "./schema";
 import { createUser, findUserByEmail } from "../auth/users";
 import {
@@ -180,6 +180,57 @@ async function seedAppointments(opts: {
   return created;
 }
 
+/** Staff, services, hours, breaks, closures of the demo dental clinic (also used by evals). */
+export async function setupDentalCatalog(tx: Tx, id: string): Promise<void> {
+  const actor = { type: "system" as const, label: "seed" };
+  const monFri = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "09:00", end: "18:00" }));
+  await setWeeklyHours(tx, id, null, [...monFri, { weekday: 6, start: "09:00", end: "14:00" }]);
+  await setBreaks(tx, id, null, [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "13:00", end: "14:00", label: "Lunch" })));
+  const [lamp] = await tx.insert(resources).values({ businessId: id, name: "Whitening lamp", capacity: 1 }).returning();
+
+  const rami = await createStaff(tx, id, { name: "Dr. Rami Khoury", title: { en: "Dentist", ar: "طبيب أسنان", fr: "Dentiste" }, color: "#0ea5e9", phone: "+9613111222" }, actor);
+  const nour = await createStaff(
+    tx,
+    id,
+    {
+      name: "Dr. Nour Haddad",
+      title: { en: "Dentist & orthodontist", ar: "طبيبة أسنان وتقويم", fr: "Dentiste et orthodontiste" },
+      color: "#8b5cf6",
+      hours: [
+        { weekday: 1, start: "09:00", end: "18:00" },
+        { weekday: 3, start: "09:00", end: "18:00" },
+        { weekday: 5, start: "09:00", end: "18:00" },
+        { weekday: 6, start: "09:00", end: "14:00" },
+      ],
+    },
+    actor,
+  );
+  const maya = await createStaff(tx, id, { name: "Maya Saade", title: { en: "Dental hygienist", ar: "اختصاصية صحة فم", fr: "Hygiéniste dentaire" }, color: "#10b981" }, actor);
+
+  const dentists = [rami.id, nour.id];
+  const svc = [
+    { name: { en: "Checkup & consultation", ar: "فحص واستشارة", fr: "Contrôle et consultation" }, durationMinutes: 30, priceCents: 4000, staffIds: dentists, category: "general", recallIntervalDays: 180 },
+    { name: { en: "Teeth cleaning", ar: "تنظيف أسنان", fr: "Détartrage et polissage" }, durationMinutes: 45, bufferAfterMinutes: 10, priceCents: 6000, staffIds: [maya.id, nour.id], category: "hygiene", recallIntervalDays: 180 },
+    { name: { en: "Filling", ar: "حشوة", fr: "Plombage" }, durationMinutes: 60, priceCents: 8000, priceFrom: true, staffIds: dentists, category: "treatment" },
+    { name: { en: "Teeth whitening", ar: "تبييض أسنان", fr: "Blanchiment dentaire" }, durationMinutes: 90, priceCents: 25000, staffIds: [rami.id], category: "cosmetic", resource: true },
+    { name: { en: "Root canal treatment", ar: "سحب عصب", fr: "Traitement de canal" }, durationMinutes: 90, priceCents: 30000, priceFrom: true, staffIds: [rami.id], category: "treatment" },
+    { name: { en: "Tooth extraction", ar: "قلع ضرس", fr: "Extraction dentaire" }, durationMinutes: 45, priceCents: 10000, priceFrom: true, bufferAfterMinutes: 15, staffIds: dentists, category: "treatment" },
+    { name: { en: "Orthodontic consultation", ar: "استشارة تقويم", fr: "Consultation d'orthodontie" }, durationMinutes: 30, priceCents: 5000, staffIds: [nour.id], category: "orthodontics" },
+    { name: { en: "Emergency visit", ar: "زيارة طارئة", fr: "Urgence dentaire" }, durationMinutes: 30, priceCents: 6000, staffIds: dentists, category: "general" },
+  ];
+  for (const s of svc) {
+    const { resource, ...rest } = s as typeof s & { resource?: boolean };
+    const created = await createService(tx, id, rest, actor);
+    if (resource) await tx.update(servicesTable).set({ resourceId: lamp!.id }).where(eq(servicesTable.id, created.id));
+  }
+  const year = DateTime.now().setZone("Asia/Beirut").year;
+  await addHoliday(tx, id, { startDate: `${year}-11-22`, name: "Independence Day" });
+  await addHoliday(tx, id, { startDate: `${year}-12-25`, name: "Christmas" });
+  await addHoliday(tx, id, { startDate: `${year + 1}-01-01`, name: "New Year" });
+  const nextWeek = DateTime.now().setZone("Asia/Beirut").plus({ weeks: 1 }).set({ weekday: 4 }).startOf("day");
+  await addTimeOff(tx, id, { staffId: maya.id, startsAt: nextWeek.toJSDate(), endsAt: nextWeek.plus({ days: 1 }).toJSDate(), reason: "Training day" });
+}
+
 async function seedDental(ownerId: string) {
   const existing = await withSystem((tx) => tx.select().from(businesses).where(eq(businesses.slug, DEMO.dentalSlug)));
   if (existing.length) return { businessId: existing[0]!.id, skipped: true };
@@ -246,53 +297,7 @@ async function seedDental(ownerId: string) {
   );
 
   await withTenant(id, async (tx) => {
-    const actor = { type: "system" as const, label: "seed" };
-    const monFri = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "09:00", end: "18:00" }));
-    await setWeeklyHours(tx, id, null, [...monFri, { weekday: 6, start: "09:00", end: "14:00" }]);
-    await setBreaks(tx, id, null, [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "13:00", end: "14:00", label: "Lunch" })));
-    const [lamp] = await tx.insert(resources).values({ businessId: id, name: "Whitening lamp", capacity: 1 }).returning();
-
-    const rami = await createStaff(tx, id, { name: "Dr. Rami Khoury", title: { en: "Dentist", ar: "طبيب أسنان", fr: "Dentiste" }, color: "#0ea5e9", phone: "+9613111222" }, actor);
-    const nour = await createStaff(
-      tx,
-      id,
-      {
-        name: "Dr. Nour Haddad",
-        title: { en: "Dentist & orthodontist", ar: "طبيبة أسنان وتقويم", fr: "Dentiste et orthodontiste" },
-        color: "#8b5cf6",
-        hours: [
-          { weekday: 1, start: "09:00", end: "18:00" },
-          { weekday: 3, start: "09:00", end: "18:00" },
-          { weekday: 5, start: "09:00", end: "18:00" },
-          { weekday: 6, start: "09:00", end: "14:00" },
-        ],
-      },
-      actor,
-    );
-    const maya = await createStaff(tx, id, { name: "Maya Saade", title: { en: "Dental hygienist", ar: "اختصاصية صحة فم", fr: "Hygiéniste dentaire" }, color: "#10b981" }, actor);
-
-    const dentists = [rami.id, nour.id];
-    const svc = [
-      { name: { en: "Checkup & consultation", ar: "فحص واستشارة", fr: "Contrôle et consultation" }, durationMinutes: 30, priceCents: 4000, staffIds: dentists, category: "general", recallIntervalDays: 180 },
-      { name: { en: "Teeth cleaning", ar: "تنظيف أسنان", fr: "Détartrage et polissage" }, durationMinutes: 45, bufferAfterMinutes: 10, priceCents: 6000, staffIds: [maya.id, nour.id], category: "hygiene", recallIntervalDays: 180 },
-      { name: { en: "Filling", ar: "حشوة", fr: "Plombage" }, durationMinutes: 60, priceCents: 8000, priceFrom: true, staffIds: dentists, category: "treatment" },
-      { name: { en: "Teeth whitening", ar: "تبييض أسنان", fr: "Blanchiment dentaire" }, durationMinutes: 90, priceCents: 25000, staffIds: [rami.id], category: "cosmetic", resource: true },
-      { name: { en: "Root canal treatment", ar: "سحب عصب", fr: "Traitement de canal" }, durationMinutes: 90, priceCents: 30000, priceFrom: true, staffIds: [rami.id], category: "treatment" },
-      { name: { en: "Tooth extraction", ar: "قلع ضرس", fr: "Extraction dentaire" }, durationMinutes: 45, priceCents: 10000, priceFrom: true, bufferAfterMinutes: 15, staffIds: dentists, category: "treatment" },
-      { name: { en: "Orthodontic consultation", ar: "استشارة تقويم", fr: "Consultation d'orthodontie" }, durationMinutes: 30, priceCents: 5000, staffIds: [nour.id], category: "orthodontics" },
-      { name: { en: "Emergency visit", ar: "زيارة طارئة", fr: "Urgence dentaire" }, durationMinutes: 30, priceCents: 6000, staffIds: dentists, category: "general" },
-    ];
-    for (const s of svc) {
-      const { resource, ...rest } = s as typeof s & { resource?: boolean };
-      const created = await createService(tx, id, rest, actor);
-      if (resource) await tx.update(servicesTable).set({ resourceId: lamp!.id }).where(eq(servicesTable.id, created.id));
-    }
-    const year = DateTime.now().setZone("Asia/Beirut").year;
-    await addHoliday(tx, id, { startDate: `${year}-11-22`, name: "Independence Day" });
-    await addHoliday(tx, id, { startDate: `${year}-12-25`, name: "Christmas" });
-    await addHoliday(tx, id, { startDate: `${year + 1}-01-01`, name: "New Year" });
-    const nextWeek = DateTime.now().setZone("Asia/Beirut").plus({ weeks: 1 }).set({ weekday: 4 }).startOf("day");
-    await addTimeOff(tx, id, { staffId: maya.id, startsAt: nextWeek.toJSDate(), endsAt: nextWeek.plus({ days: 1 }).toJSDate(), reason: "Training day" });
+    await setupDentalCatalog(tx, id);
     await completeOnboarding(tx, id);
   });
 

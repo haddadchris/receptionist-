@@ -514,11 +514,45 @@ export const conversations = pgTable(
     unreadCount: integer("unread_count").notNull().default(0),
     assignedUserId: uuid("assigned_user_id").references(() => users.id, { onDelete: "set null" }),
     summary: text("summary"),
+    /** Language the customer last wrote in ("arabizi" = Arabic in Latin letters). */
+    language: text("language").$type<ConversationLanguage>(),
+    /** Short-lived agent working memory (last offered slots, focus appointment, …). */
+    state: jsonb("state").$type<AgentState>().notNull().default({}),
+    /** Lease so only one worker generates a reply for a conversation at a time. */
+    processingUntil: tstz("processing_until"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [index().on(t.businessId, t.lastMessageAt), index().on(t.businessId, t.channel, t.externalId)],
 );
+
+export type ConversationLanguage = "ar" | "arabizi" | "en" | "fr";
+
+export type OfferedSlot = { start: string; staffId: string; staffName: string };
+
+/** Agent working memory persisted per conversation (see packages/core/src/agent/state.ts). */
+export type AgentState = {
+  /** Last availability offered to the customer. */
+  offer?: { serviceId: string; serviceName: string; staffId?: string | null; slots: OfferedSlot[]; at: string };
+  /** Upcoming appointments last looked up for this customer. */
+  appointments?: { id: string; start: string; serviceName: string; staffName: string; serviceId?: string }[];
+  /** What the customer is trying to do. */
+  intent?: "book" | "reschedule" | "cancel" | null;
+  serviceId?: string | null;
+  /** Appointment the customer is talking about (reschedule/cancel). */
+  focusAppointmentId?: string | null;
+  /** A slot the customer picked, waiting for their name before booking. */
+  pendingSlot?: OfferedSlot & { serviceId: string };
+  /** Appointments created in this conversation (web chat may only manage these). */
+  createdAppointmentIds?: string[];
+  /** Consecutive turns where the agent did not understand. */
+  confusedCount?: number;
+  /** Date/time the customer asked for, remembered until a service is chosen. */
+  requested?: { date?: string | null; part?: "morning" | "afternoon" | "evening" | null; time?: string | null };
+  /** Phone given in web chat (unverified). */
+  claimedPhone?: string | null;
+  customerName?: string | null;
+};
 
 export type ToolCallLog = {
   name: string;
@@ -549,7 +583,13 @@ export const messages = pgTable(
     toolCalls: jsonb("tool_calls").$type<ToolCallLog[]>(),
     createdAt: createdAt(),
   },
-  (t) => [index().on(t.conversationId, t.createdAt), index().on(t.providerMessageId)],
+  (t) => [
+    index().on(t.conversationId, t.createdAt),
+    index().on(t.providerMessageId),
+    uniqueIndex("messages_inbound_provider_id_unique")
+      .on(t.businessId, t.providerMessageId)
+      .where(sql`direction = 'inbound' and provider_message_id is not null`),
+  ],
 );
 
 export type TranscriptTurn = { role: "caller" | "agent" | "system"; text: string; at: string };
