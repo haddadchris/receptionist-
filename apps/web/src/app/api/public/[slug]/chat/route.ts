@@ -10,7 +10,7 @@ export const maxDuration = 60;
 const body = z.object({ token: z.string().max(200).nullish(), message: z.string().min(1).max(1000), test: z.boolean().optional() });
 
 export async function POST(req: Request, ctx: { params: Promise<{ slug: string }> }) {
-  const tooMany = limited(req, "chat", 20) ?? limited(req, "chat-burst", 4, 5_000);
+  const tooMany = (await limited(req, "chat", 20)) ?? (await limited(req, "chat-burst", 4, 5_000));
   if (tooMany) return tooMany;
   try {
     const { slug } = await ctx.params;
@@ -31,7 +31,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ slug: string }
 }
 
 export async function GET(req: Request, ctx: { params: Promise<{ slug: string }> }) {
-  const tooMany = limited(req, "chat-history", 30);
+  const tooMany = await limited(req, "chat-history", 30);
   if (tooMany) return tooMany;
   try {
     const { slug } = await ctx.params;

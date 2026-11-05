@@ -14,6 +14,7 @@ import { recordUsage } from "../lib/usage";
 import { DomainError } from "../lib/errors";
 import { acquireLease, appendMessage, getOrCreateConversation, loadHistory, releaseLease, setConversationStatus } from "../agent/conversations";
 import { runAgentTurn } from "../agent/runner";
+import { aiReplyAllowed, CAP_REPLY } from "../agent/caps";
 import type { LLMProvider } from "../agent/llm/types";
 
 export function newWebChatToken(): string {
@@ -53,6 +54,14 @@ export async function handleWebChatMessage(input: {
   );
   if (convo.status !== "ai_active") {
     return { token, reply: "", conversationId: convo.id, handoff: true, status: convo.status };
+  }
+  if (!input.test && !(await aiReplyAllowed(convo.id))) {
+    const l = (convo.language as ConversationLanguage | null) ?? (business.defaultLanguage as ConversationLanguage);
+    await withTenant(business.id, async (tx) => {
+      await appendMessage(tx, { businessId: business.id, conversationId: convo.id, direction: "outbound", sender: "system", body: CAP_REPLY[l] });
+      await setConversationStatus(tx, business.id, convo.id, "human_takeover", { type: "system", label: "AI cap" }, "Hourly AI reply limit reached for this chat");
+    });
+    return { token, reply: CAP_REPLY[l], conversationId: convo.id, handoff: true, status: "human_takeover" };
   }
   // One reply at a time per chat session.
   for (let i = 0; i < 20 && !(await acquireLease(convo.id, 60)); i++) await new Promise((r) => setTimeout(r, 300));

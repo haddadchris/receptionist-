@@ -39,10 +39,10 @@ export async function loginAction(_: unknown, form: FormData): Promise<Result> {
   const { t } = await getT();
   const ip = await clientIp();
   // Per-IP (clinics often share one NAT'd IP) and per-account limits against brute force.
-  if (!rateLimit(`login:${ip}`, 30, 60_000).ok) return { ok: false, error: t("errors.rateLimited") };
+  if (!(await rateLimit(`login:${ip}`, 30, 60_000)).ok) return { ok: false, error: t("errors.rateLimited") };
   const parsed = loginSchema.safeParse({ email: form.get("email"), password: form.get("password") });
   if (!parsed.success) return { ok: false, error: t("auth.invalidCredentials") };
-  if (!rateLimit(`login-account:${parsed.data.email.toLowerCase()}`, 10, 60_000).ok) return { ok: false, error: t("errors.rateLimited") };
+  if (!(await rateLimit(`login-account:${parsed.data.email.toLowerCase()}`, 10, 60_000)).ok) return { ok: false, error: t("errors.rateLimited") };
   const res = await getAuth().signIn(parsed.data.email, parsed.data.password);
   if ("error" in res) return { ok: false, error: t("auth.invalidCredentials") };
   return { ok: true, redirectTo: await landing(res.userId, safeNext(form.get("next"))) };
@@ -51,7 +51,7 @@ export async function loginAction(_: unknown, form: FormData): Promise<Result> {
 export async function magicLinkAction(_: unknown, form: FormData): Promise<Result> {
   const { t } = await getT();
   const ip = await clientIp();
-  if (!rateLimit(`magic:${ip}`, 5, 60_000).ok) return { ok: false, error: t("errors.rateLimited") };
+  if (!(await rateLimit(`magic:${ip}`, 5, 60_000)).ok) return { ok: false, error: t("errors.rateLimited") };
   const email = z.string().trim().email().safeParse(form.get("email"));
   if (!email.success) return { ok: false, error: t("auth.invalidCredentials") };
   const res = await getAuth().sendMagicLink(email.data, safeNext(form.get("next")) ?? "/dashboard");
@@ -67,7 +67,7 @@ const signupSchema = z.object({
 export async function signupAction(_: unknown, form: FormData): Promise<Result> {
   const { t } = await getT();
   const ip = await clientIp();
-  if (!rateLimit(`signup:${ip}`, 5, 60_000).ok) return { ok: false, error: t("errors.rateLimited") };
+  if (!(await rateLimit(`signup:${ip}`, 5, 60_000)).ok) return { ok: false, error: t("errors.rateLimited") };
   const parsed = signupSchema.safeParse({ name: form.get("name"), email: form.get("email"), password: form.get("password") });
   if (!parsed.success) return { ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(" · ") };
   const res = await getAuth().signUp(parsed.data);

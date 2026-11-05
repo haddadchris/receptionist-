@@ -22,8 +22,8 @@ export function apiError(e: unknown) {
 }
 
 /** Returns a 429 response when the caller exceeded the limit, else null. */
-export function limited(req: Request, bucket: string, limit: number, windowMs = 60_000) {
-  const r = rateLimit(`${bucket}:${ipFromRequest(req)}`, limit, windowMs);
+export async function limited(req: Request, bucket: string, limit: number, windowMs = 60_000) {
+  const r = await rateLimit(`${bucket}:${ipFromRequest(req)}`, limit, windowMs);
   if (r.ok) return null;
   return NextResponse.json(
     { error: "Too many requests", code: "RATE_LIMITED" },

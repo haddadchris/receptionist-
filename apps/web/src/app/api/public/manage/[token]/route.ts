@@ -12,7 +12,7 @@ const body = z.discriminatedUnion("action", [
 ]);
 
 export async function POST(req: Request, ctx: { params: Promise<{ token: string }> }) {
-  const tooMany = limited(req, "manage", 20);
+  const tooMany = await limited(req, "manage", 20);
   if (tooMany) return tooMany;
   try {
     const { token } = await ctx.params;

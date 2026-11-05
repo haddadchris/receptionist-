@@ -1,8 +1,9 @@
 import Fastify from "fastify";
 import formbody from "@fastify/formbody";
 import websocket from "@fastify/websocket";
-import { sql } from "drizzle-orm";
-import { getDb } from "@fekerte/core/db/client";
+import { checkHealth } from "@fekerte/core/lib/health";
+import { logger } from "@fekerte/core/lib/logger";
+import { activeCallCount } from "./active";
 import { realtimeAvailable } from "@fekerte/core/voice/realtime";
 import { streamingSTTAvailable } from "@fekerte/core/voice/stt-stream";
 import { ttsProviderKind } from "@fekerte/core/voice/tts";
@@ -23,20 +24,22 @@ export async function buildApp() {
   });
 
   app.get("/health", async (_req, reply) => {
-    try {
-      await getDb().execute(sql`select 1`);
-      return {
-        status: "ok",
-        db: "ok",
-        llm: llmProviderKind(),
-        twilio: twilioConfigured(),
-        realtime: realtimeAvailable(),
-        streamingStt: streamingSTTAvailable(),
-        tts: ttsProviderKind(),
-      };
-    } catch (e) {
-      return reply.code(503).send({ status: "degraded", db: "error", error: e instanceof Error ? e.message : String(e) });
-    }
+    const h = await checkHealth();
+    return reply.code(h.db === "ok" ? 200 : 503).send({
+      ...h,
+      activeCalls: activeCallCount(),
+      llm: llmProviderKind(),
+      twilio: twilioConfigured(),
+      realtime: realtimeAvailable(),
+      streamingStt: streamingSTTAvailable(),
+      tts: ttsProviderKind(),
+    });
+  });
+
+  // Unexpected errors → structured log → error hook (Sentry when configured).
+  app.setErrorHandler((err, req, reply) => {
+    logger.error("voice request error", { err, path: req.url.split("?")[0], method: req.method });
+    void reply.code(500).send({ error: "Internal error" });
   });
 
   registerTwilioRoutes(app);

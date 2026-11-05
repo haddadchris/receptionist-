@@ -5,6 +5,7 @@
  */
 import { DateTime } from "luxon";
 import { normalizeForMatch } from "../../lib/lang";
+import { detectInjection } from "../guard";
 
 export type Flags = {
   greeting: boolean;
@@ -49,7 +50,9 @@ export function parseFlags(raw: string): Flags {
     complaint: has(/(complain|complaint|angry|terrible|worst|rude|unacceptable|plainte|inadmissible|scandal|inacceptable|زعلان|مش مقبول|شكوى|معيب|z3lan|za3len|za3lan|mesh ma2boul|msh ma2boul|ma bta3rfo)/, t),
     emergency: has(/(bleeding|swollen|swelling|accident|severe pain|really bad pain|can.?t breathe|broken tooth|saign|gonfl|douleur (forte|intense)|نزيف|عم ينزف|ورم|منفوخ|وجع كتير|مكسور|nazif|3am yenzof|wej3 ktir|waja3 ktir|wajaa ktir|ktir 3am yewja3|manfou5|manfoukh)/, t),
     medical: has(/(antibiotic|painkiller|medicine|medication|should i take|dosage|\bdose\b|ibuprofen|panadol|advil|\bdawa\b|\bdwa\b|medicament|antibiotique|is it normal|c.est normal)/, t) || has(arWord("دوا|دواء|مسكن|مضاد حيوي|حبوب|طبيعي"), t),
-    injection: has(/(ignore (all|previous|your)|system prompt|you are now|pretend|developer mode|discount|khasm|5asm|خصم|remise|reduction|for free|majjanan|ببلاش|other (patients|customers)|everyone.s appointments|list (all )?(patients|customers)|tell me who)/, t),
+    injection:
+      has(/(ignore (all|previous|your)|system prompt|you are now|pretend|developer mode|discount|khasm|5asm|خصم|remise|reduction|for free|majjanan|ببلاش|other (patients|customers)|everyone.s appointments|list (all )?(patients|customers)|tell me who)/, t) ||
+      detectInjection(raw).kinds.some((k) => k === "override" || k === "data_exfiltration" || k === "prompt_leak"),
     offTopic: has(/(joke|weather|politic|president|football|recipe|homework|write (me )?(a|an) (poem|essay|code)|nokta|نكتة|طقس|سياسة)/, t),
     yes: has(/^(yes|yeah|yep|ok|okay|sure|eh|ee|aywa|ah|tamem|tamam|mashi|oui|d.accord)\b/, t) || has(/^(نعم|اي|ايه|تمام|ماشي|اوكي)(?:$|[^\u0600-\u06FF])/, t),
     no: has(/^(no|nope|la|la2|lae|non)\b/, t) || has(/^لا(?:$|[^\u0600-\u06FF])/, t),

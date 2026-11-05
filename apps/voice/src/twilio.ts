@@ -17,10 +17,14 @@ import { calls } from "@fekerte/core/db/schema";
 import { normalizePhone } from "@fekerte/core/lib/phone";
 import { logger } from "@fekerte/core/lib/logger";
 import { VoiceCallSession } from "@fekerte/core/voice/session";
+import { signValue, verifyValue } from "@fekerte/core/booking/tokens";
+
+const STREAM_PURPOSE = "twilio-stream";
 import { routeIncomingCall } from "@fekerte/core/voice/routing";
 import { startRecording, transferCall, twilioConfigured, twiml, validateTwilioSignature } from "@fekerte/core/voice/twilio";
 import { and, eq } from "drizzle-orm";
 import { CascadeController, RealtimeController, type CallController } from "./controllers";
+import { trackCall, untrackCall } from "./active";
 
 const xml = (body: string) => ({ headers: { "content-type": "text/xml" }, body: twiml.wrap(body) });
 
@@ -57,7 +61,7 @@ export function registerTwilioRoutes(app: FastifyInstance) {
       const r = xml(twiml.say(MESSAGES.notConfigured.en, "en") + twiml.hangup());
       return reply.headers(r.headers).send(r.body);
     }
-    const route = await routeIncomingCall(business);
+    const route = await routeIncomingCall(business, { from: normalizePhone(p.From ?? "") ?? p.From ?? null });
     if (route.kind === "ring_business") {
       const r = xml(twiml.dial(route.number, { timeout: route.timeout, action: publicUrl(`/twilio/after-dial?b=${business.id}`) }));
       return reply.headers(r.headers).send(r.body);
@@ -165,7 +169,9 @@ async function answerWithAi(businessId: string, p: Record<string, string>, pipel
     const action = publicUrl(`/twilio/gather?b=${businessId}&c=${session.callId}&e=0`);
     return twiml.wrap(twiml.gather(action, session.speechLanguage, twiml.say(greeting, session.speechLanguage)) + twiml.redirect(action));
   }
-  return twiml.wrap(twiml.stream(wsUrl("/twilio/stream"), { businessId, callId: session.callId, pipeline }));
+  // Signed so only media streams started by our own TwiML can attach to a call session.
+  const sig = signValue(`${businessId}:${session.callId}`, STREAM_PURPOSE);
+  return twiml.wrap(twiml.stream(wsUrl("/twilio/stream"), { businessId, callId: session.callId, pipeline, sig }));
 }
 
 /** Twilio Media Streams protocol: connected → start → media… → stop. 8 kHz µ-law, base64. */
@@ -206,8 +212,13 @@ function handleMediaStream(socket: WebSocket) {
           streamSid = msg.start!.streamSid;
           callSid = msg.start!.callSid;
           const params = msg.start!.customParameters ?? {};
+          if (!params.sig || verifyValue(params.sig, STREAM_PURPOSE) !== `${params.businessId}:${params.callId}`) {
+            logger.warn("rejected unsigned media stream", { callSid });
+            return socket.close();
+          }
           session = await VoiceCallSession.load(params.businessId!, params.callId!);
           if (!session) return socket.close();
+          trackCall(session.callId);
           void startRecording(callSid, publicUrl(`/twilio/recording?b=${params.businessId}&c=${params.callId}`));
           controller = params.pipeline === "realtime" ? new RealtimeController(session, transport, "ulaw8k") : new CascadeController(session, transport, "ulaw8k");
           controller.onHandoff = async () => {
@@ -229,6 +240,7 @@ function handleMediaStream(socket: WebSocket) {
           break;
         }
         case "stop":
+          if (session) untrackCall(session.callId);
           await controller?.close();
           await session?.end({ reason: "stream stopped", transferred });
           break;
@@ -238,6 +250,7 @@ function handleMediaStream(socket: WebSocket) {
     }
   });
   socket.on("close", async () => {
+    if (session) untrackCall(session.callId);
     await controller?.close();
     await session?.end({ reason: "socket closed", transferred }).catch(() => {});
   });

@@ -1,27 +1,14 @@
 import "server-only";
 import { headers } from "next/headers";
+import { rateLimit as hit, type RateLimitResult } from "@fekerte/core/lib/rate-limit";
 
 /**
- * Fixed-window in-memory rate limiter. Good enough for a single Node instance
- * and local dev; on multi-instance/serverless deployments swap the store for
- * Redis/Upstash (same interface) — see README "Hardening".
+ * Rate limiting for actions and API routes. The store is shared Postgres in
+ * production (works on serverless / multiple instances) and in-memory in dev
+ * (RATE_LIMIT_STORE overrides).
  */
-type Bucket = { count: number; resetAt: number };
-const store = (globalThis as unknown as { __fkRate?: Map<string, Bucket> }).__fkRate ?? new Map<string, Bucket>();
-(globalThis as unknown as { __fkRate?: Map<string, Bucket> }).__fkRate = store;
-
-export function rateLimit(key: string, limit: number, windowMs: number): { ok: boolean; remaining: number; retryAfterMs: number } {
-  const now = Date.now();
-  let b = store.get(key);
-  if (!b || b.resetAt <= now) {
-    b = { count: 0, resetAt: now + windowMs };
-    store.set(key, b);
-  }
-  b.count++;
-  if (store.size > 50_000) {
-    for (const [k, v] of store) if (v.resetAt <= now) store.delete(k);
-  }
-  return { ok: b.count <= limit, remaining: Math.max(0, limit - b.count), retryAfterMs: b.resetAt - now };
+export function rateLimit(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
+  return hit(key, limit, windowMs);
 }
 
 export async function clientIp(): Promise<string> {

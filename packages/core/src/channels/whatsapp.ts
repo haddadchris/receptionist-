@@ -37,6 +37,7 @@ import {
   setConversationStatus,
 } from "../agent/conversations";
 import { runAgentTurn } from "../agent/runner";
+import { aiReplyAllowed, CAP_REPLY } from "../agent/caps";
 import type { ConversationLanguage } from "../db/schema";
 
 export const WHATSAPP_REPLY_JOB = "whatsapp.reply";
@@ -233,6 +234,15 @@ async function replyOnce(businessId: string, conversationId: string): Promise<st
   const effectiveText = /^\s*[2٢]\s*$/.test(userText) && (await lastWasConfirmRequest(businessId, conversationId))
     ? ({ ar: "بدي غيّر موعدي", arabizi: "badde ghayer maw3ade", en: "I want to reschedule my appointment", fr: "Je voudrais déplacer mon rendez-vous" } as const)[lang ?? "ar"]
     : userText;
+
+  if (!(await aiReplyAllowed(conversationId))) {
+    const l = lang ?? (business.defaultLanguage as ConversationLanguage);
+    await sendAndStore(business, conversationId, phone, CAP_REPLY[l], [], "system");
+    await withTenant(businessId, (tx) =>
+      setConversationStatus(tx, businessId, conversationId, "human_takeover", { type: "system", label: "AI cap" }, "Hourly AI reply limit reached for this conversation"),
+    );
+    return "ai_capped";
+  }
 
   const history = await withTenant(businessId, (tx) => loadHistory(tx, conversationId, { before: pending[0]!.createdAt, limit: 16 }));
   const result = await runAgentTurn({

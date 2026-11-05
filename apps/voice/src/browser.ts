@@ -24,6 +24,7 @@ import { realtimeAvailable } from "@fekerte/core/voice/realtime";
 import { streamingSTTAvailable } from "@fekerte/core/voice/stt-stream";
 import { SentenceChunker, toSpeakable, ttsProviderKind } from "@fekerte/core/voice/tts";
 import { CascadeController, RealtimeController, type CallController } from "./controllers";
+import { trackCall, untrackCall } from "./active";
 
 export function audioPipelineFor(pref: string | undefined): VoicePipelineKind | null {
   if (pref === "realtime" && realtimeAvailable()) return "realtime";
@@ -57,6 +58,7 @@ async function handleBrowserSession(socket: WebSocket, req: FastifyRequest) {
   const audioPipeline = q.mode === "audio" ? audioPipelineFor(business.aiSettings?.voicePipeline) : null;
   const pipeline: VoicePipelineKind = audioPipeline ?? "browser_text";
   const session = await VoiceCallSession.start({ business, provider: "browser", from: token.callerPhone ?? null, to: business.voiceNumber, pipeline });
+  trackCall(session.callId);
   let controller: CallController | null = null;
   let turn: AbortController | null = null;
   let ended = false;
@@ -64,6 +66,7 @@ async function handleBrowserSession(socket: WebSocket, req: FastifyRequest) {
   const end = async () => {
     if (ended) return;
     ended = true;
+    untrackCall(session.callId);
     turn?.abort();
     await controller?.close();
     await session.end({ reason: "browser hangup", countUsage: false }).catch((err) => logger.warn("end failed", { err: String(err) }));

@@ -13,7 +13,7 @@ const query = z.object({
 });
 
 export async function GET(req: Request, ctx: { params: Promise<{ slug: string }> }) {
-  const tooMany = limited(req, "slots", 90);
+  const tooMany = await limited(req, "slots", 90);
   if (tooMany) return tooMany;
   try {
     const { slug } = await ctx.params;

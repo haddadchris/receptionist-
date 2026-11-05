@@ -17,6 +17,10 @@ const { registerDefaultJobHandlers } = await import("@fekerte/core/jobs/handlers
 const { runDueJobs } = await import("@fekerte/core/jobs/queue");
 const { scheduleRecurringJobs } = await import("@fekerte/core/jobs/scheduler");
 const { logger } = await import("@fekerte/core/lib/logger");
+const { initErrorReporting } = await import("@fekerte/core/lib/error-reporting");
+initErrorReporting("voice");
+process.on("unhandledRejection", (err) => logger.error("unhandled rejection", { err }));
+process.on("uncaughtException", (err) => logger.error("uncaught exception", { err }));
 
 const app = await buildApp();
 const port = Number(process.env.PORT ?? process.env.VOICE_PORT ?? 3001);

@@ -16,7 +16,7 @@ import { DEMO_SLUG } from "@/lib/demo";
 export async function bookDemoAction(input: z.input<typeof leadInputSchema> & { website?: string }) {
   const { t } = await getT();
   const ip = await clientIp();
-  if (!rateLimit(`lead:${ip}`, 5, 10 * 60_000).ok) return { ok: false as const, error: t("errors.rateLimited") };
+  if (!(await rateLimit(`lead:${ip}`, 5, 10 * 60_000)).ok) return { ok: false as const, error: t("errors.rateLimited") };
   // Bots fill the hidden "website" field; pretend success.
   if (input.website) return { ok: true as const, data: null };
   try {
@@ -32,7 +32,7 @@ export async function bookDemoAction(input: z.input<typeof leadInputSchema> & { 
 export async function demoVoiceTokenAction(input: { callerPhone?: string | null; mode: "text" | "audio" }) {
   const { t } = await getT();
   const ip = await clientIp();
-  if (!rateLimit(`demo-call:${ip}`, 6, 60 * 60_000).ok) return { ok: false as const, error: t("marketing.demoPage.tooMany") };
+  if (!(await rateLimit(`demo-call:${ip}`, 6, 60 * 60_000)).ok) return { ok: false as const, error: t("marketing.demoPage.tooMany") };
   return runAction(async () => {
     const business = await getBusinessBySlug(DEMO_SLUG);
     if (!business) throw new Error("Demo business not found");

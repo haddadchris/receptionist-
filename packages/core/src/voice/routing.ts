@@ -8,6 +8,7 @@ import { withTenant } from "../db/tenant";
 import { loadCalendarInput } from "../availability/loader";
 import { workingWindows } from "../availability/engine";
 import { checkAiAllowed } from "../billing/limits";
+import { aiCallAllowed } from "../agent/caps";
 import { realtimeAvailable } from "./realtime";
 import { streamingSTTAvailable } from "./stt-stream";
 import { ttsProviderKind } from "./tts";
@@ -37,9 +38,11 @@ export function choosePhonePipeline(business: Business): VoicePipelineKind {
   return "gather"; // Twilio built-in speech recognition + <Say>; works with Twilio credentials only.
 }
 
-export async function routeIncomingCall(business: Business, opts: { afterDial?: boolean } = {}): Promise<CallRoute> {
+export async function routeIncomingCall(business: Business, opts: { afterDial?: boolean; from?: string | null } = {}): Promise<CallRoute> {
   const check = await checkAiAllowed(business, "voiceAi");
-  const blocked = check.ok ? null : check.reason;
+  let blocked: string | null = check.ok ? null : check.reason;
+  // Same caller hammering the AI line → ring the business / voicemail instead.
+  if (!blocked && !(await aiCallAllowed(business.id, opts.from))) blocked = "caller_rate_limited";
   const transfer = business.aiSettings?.transferNumber ?? business.phone ?? null;
   if (blocked) {
     return transfer ? { kind: "ring_business", number: transfer, timeout: 30 } : { kind: "unavailable", reason: blocked };

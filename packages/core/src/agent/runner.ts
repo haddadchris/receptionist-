@@ -13,7 +13,9 @@ import { getStaffServiceLinks, getWeeklyHours, listServices, listStaff } from ".
 import { detectLanguage } from "../lib/lang";
 import { normalizePhone } from "../lib/phone";
 import { pickLocalized } from "../lib/i18n";
+import { detectInjection, guardReply, securityNote } from "./guard";
 import { logger } from "../lib/logger";
+import { audit } from "../lib/audit";
 import { buildDynamicPrompt, buildStablePrompt } from "./prompt";
 import { executeTool, TOOL_DEFS, type ToolEffects } from "./tools";
 import { getLLMProvider } from "./llm";
@@ -49,6 +51,8 @@ export type AgentTurnResult = {
   llmCalls: number;
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
   stop: string;
+  /** Prompt-injection flags for this turn and whether the reply was redacted by the output guard. */
+  security?: { injection: string[]; redacted: boolean };
 };
 
 const FALLBACK: Record<ConversationLanguage, string> = {
@@ -88,7 +92,9 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   // Phone calls are spoken in Arabic script (TTS can't read Arabizi).
   if (input.channel === "voice" && language === "arabizi") language = "ar";
 
-  const phone = input.verifiedPhone ?? state.claimedPhone ?? null;
+  // Only a channel-verified phone (WhatsApp sender, caller ID) unlocks the customer's record.
+  // A number typed into web chat is unverified: we never reveal who it belongs to.
+  const phone = input.verifiedPhone ?? null;
   const customer = phone
     ? await withTenant(business.id, async (tx) => {
         const p = normalizePhone(phone);
@@ -100,7 +106,8 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
 
   const data = await loadPromptData(business);
   const systemStable = buildStablePrompt({ business, ...data, channel: input.channel });
-  const systemDynamic = buildDynamicPrompt({
+  const injection = detectInjection(input.userText);
+  const dynamicBase = buildDynamicPrompt({
     business,
     now,
     channel: input.channel,
@@ -111,6 +118,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       : { name: state.customerName ?? null, known: false, phoneVerified: !!input.verifiedPhone },
     state,
   });
+  const systemDynamic = injection.flagged ? `${dynamicBase}\n\n${securityNote(injection.kinds)}` : dynamicBase;
 
   const effects: ToolEffects = { bookedAppointmentIds: [], rescheduledAppointmentIds: [], cancelledAppointmentIds: [] };
   const toolLog: ToolCallLog[] = [];
@@ -204,5 +212,37 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   if (!reply.trim()) reply = FALLBACK[language];
   if (effects.bookedAppointmentIds.length || effects.rescheduledAppointmentIds.length || effects.cancelledAppointmentIds.length) state.confusedCount = 0;
 
-  return { reply: reply.trim(), language, toolLog, effects, state, provider: provider.name, llmCalls, usage, stop };
+  // Output guard: no contact details except the business's own and the verified customer's.
+  const guarded = guardReply(reply.trim(), {
+    allowedPhones: [business.phone, business.whatsappNumber, business.voiceNumber, business.aiSettings?.transferNumber, input.verifiedPhone, state.claimedPhone],
+    allowedEmails: [business.email],
+    language,
+  });
+  const serious = injection.kinds.filter((k) => k === "override" || k === "data_exfiltration" || k === "prompt_leak");
+  if (serious.length || guarded.redacted) {
+    logger.warn("agent security event", { businessId: business.id, conversationId: input.conversationId, injection: injection.kinds, redacted: guarded.redacted });
+    await withTenant(business.id, (tx) =>
+      audit(tx, {
+        businessId: business.id,
+        actor: { type: "customer" },
+        action: guarded.redacted ? "ai.reply_redacted" : "ai.injection_attempt",
+        entityType: "conversation",
+        entityId: input.conversationId,
+        changes: { kinds: injection.kinds, leakedCount: guarded.leaked.length, channel: input.channel },
+      }),
+    ).catch((err) => logger.warn("audit failed", { err: String(err) }));
+  }
+
+  return {
+    reply: guarded.reply,
+    language,
+    toolLog,
+    effects,
+    state,
+    provider: provider.name,
+    llmCalls,
+    usage,
+    stop,
+    security: { injection: injection.kinds, redacted: guarded.redacted },
+  };
 }
