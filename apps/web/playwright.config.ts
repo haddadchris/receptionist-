@@ -21,10 +21,8 @@ export default defineConfig({
     { name: "desktop", use: { ...devices["Desktop Chrome"] }, testIgnore: /mobile\.spec/ },
     { name: "mobile", use: { ...devices["Pixel 7"] }, testMatch: /mobile\.spec/ },
   ],
-  webServer: {
-    command: "pnpm dev",
-    url: "http://localhost:3000/api/health",
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  webServer: [
+    { command: "pnpm --filter @fekerte/web dev", url: "http://localhost:3000/api/health", reuseExistingServer: true, timeout: 120_000 },
+    { command: "pnpm --filter @fekerte/voice dev", url: "http://localhost:3001/health", reuseExistingServer: true, timeout: 60_000 },
+  ],
 });

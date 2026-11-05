@@ -13,7 +13,19 @@ export function AiSettingsForm({
   initial,
   readOnly,
 }: {
-  initial: { personaName: string; tone: "warm" | "professional" | "casual"; extraInstructions: string; whatsappAutoReply: boolean; whatsappNumber: string; whatsappPhoneNumberId: string };
+  initial: {
+    personaName: string;
+    tone: "warm" | "professional" | "casual";
+    extraInstructions: string;
+    whatsappAutoReply: boolean;
+    whatsappNumber: string;
+    whatsappPhoneNumberId: string;
+    voicePipeline: "cascade" | "realtime";
+    voiceMode: "always" | "after_hours" | "overflow";
+    overflowRingSeconds: number;
+    transferNumber: string;
+    voiceNumber: string;
+  };
   readOnly?: boolean;
 }) {
   const { t } = useI18n();
@@ -63,13 +75,50 @@ export function AiSettingsForm({
           </div>
         </CardContent>
       </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("voice.settings")}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label={t("voice.voiceNumber")} hint={t("voice.voiceNumberHint")}>
+              <Input value={v.voiceNumber} onChange={(e) => set("voiceNumber", e.target.value)} dir="ltr" inputMode="tel" />
+            </Field>
+            <Field label={t("voice.transferNumber")}>
+              <Input value={v.transferNumber} onChange={(e) => set("transferNumber", e.target.value)} dir="ltr" inputMode="tel" />
+            </Field>
+            <Field label={t("voice.voiceMode")}>
+              <Select value={v.voiceMode} onChange={(e) => set("voiceMode", e.target.value as typeof v.voiceMode)}>
+                <option value="always">{t("voice.modeAlways")}</option>
+                <option value="after_hours">{t("voice.modeAfterHours")}</option>
+                <option value="overflow">{t("voice.modeOverflow")}</option>
+              </Select>
+            </Field>
+            <Field label={t("voice.ringSeconds")}>
+              <Input type="number" min={5} max={60} value={v.overflowRingSeconds} onChange={(e) => set("overflowRingSeconds", Number(e.target.value))} />
+            </Field>
+            <Field label={t("voice.pipeline")}>
+              <Select value={v.voicePipeline} onChange={(e) => set("voicePipeline", e.target.value as typeof v.voicePipeline)}>
+                <option value="cascade">{t("voice.pipelineCascade")}</option>
+                <option value="realtime">{t("voice.pipelineRealtime")}</option>
+              </Select>
+            </Field>
+          </div>
+        </CardContent>
+      </Card>
       {!readOnly ? (
         <Button
           className="justify-self-start"
           disabled={pending}
           onClick={() =>
             start(async () => {
-              const res = await saveAiSettingsAction({ ...v, whatsappNumber: v.whatsappNumber || null, whatsappPhoneNumberId: v.whatsappPhoneNumberId || null });
+              const res = await saveAiSettingsAction({
+                ...v,
+                whatsappNumber: v.whatsappNumber || null,
+                whatsappPhoneNumberId: v.whatsappPhoneNumberId || null,
+                transferNumber: v.transferNumber || null,
+                voiceNumber: v.voiceNumber || null,
+              });
               if (res.ok) {
                 toast.success(t("common.saved"));
                 router.refresh();

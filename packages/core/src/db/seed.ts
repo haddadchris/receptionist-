@@ -258,7 +258,7 @@ async function seedDental(ownerId: string) {
         status: "active",
         whatsappNumber: "+96170123456",
         whatsappPhoneNumberId: "demo-dental-wa",
-        voiceNumber: "+96140000001",
+        voiceNumber: "+12025550147",
         mapsUrl: "https://maps.google.com/?q=Jbeil+Lebanon",
         googleReviewUrl: "https://g.page/r/demo-dental/review",
         branding: {

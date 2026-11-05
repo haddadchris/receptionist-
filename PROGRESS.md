@@ -1,6 +1,6 @@
 # Fekerte — build progress
 
-_Last updated: Phase 2 complete._
+_Last updated: Phase 3 complete._
 
 ## Status by phase
 
@@ -8,8 +8,8 @@ _Last updated: Phase 2 complete._
 |---|---|---|
 | 1 | Foundation + Basic tier (online booking) | ✅ Done |
 | 2 | Standard tier — AI WhatsApp receptionist | ✅ Done |
-| 3 | Premium tier — AI voice receptionist (Lebanese Arabic) | ⏳ Next |
-| 4 | Billing, plans, limits | ⏳ |
+| 3 | Premium tier — AI voice receptionist (Lebanese Arabic) | ✅ Done |
+| 4 | Billing, plans, limits | ⏳ Next |
 | 5 | Growth layer (CRM, deposits, reviews, recalls, analytics, campaigns) | ⏳ |
 | 6 | Marketing site + sales tools | ⏳ |
 | 7 | Hardening + handoff | ⏳ |
@@ -47,6 +47,35 @@ _Last updated: Phase 2 complete._
   - **Result with the mock LLM: 36/36 (100%).** Honest caveat: the mock's rules were written alongside these scenarios, so this mainly proves the tools, harness, language handling and DB outcomes. **The suite has not been run against a real LLM** (no API key in this environment) — run `EVAL_PROVIDER=anthropic ANTHROPIC_API_KEY=… pnpm eval` before going live.
 - Tests: core now 103 (adds NLU/spoken phrasing, Anthropic request-shape, WhatsApp channel incl. takeover/dedupe/reminder-1/signature, eval suite), web e2e 10 (adds WhatsApp simulator booking + takeover/hand-back, web chat).
 
+## Phase 3 — what's done
+
+- **`apps/voice`** (Fastify + `@fastify/websocket`, long-running): Twilio webhooks (`/twilio/voice`, `/twilio/after-dial`, `/twilio/gather`, `/twilio/voicemail`, `/twilio/recording`, `/twilio/status`), Media Streams WebSocket (`/twilio/stream`, 8 kHz µ-law, `media`/`mark`/`clear`), browser simulator WebSocket (`/browser/session`), `/health`, and a background job worker. `X-Twilio-Signature` validation (unsigned requests only accepted in dev without Twilio credentials).
+- **One session model for every voice path** (`packages/core/src/voice/session.ts`): call row + voice conversation, incremental transcript, same agent + tools as WhatsApp (`channel: "voice"`, caller ID = verified phone), outcome derived from tool results (booked / rescheduled / cancelled / transferred / message_taken / info / abandoned), AI summary (LLM when configured, deterministic otherwise), voice-minute usage (phone calls only).
+- **Pipelines** (chosen per business, degrading gracefully to what keys allow):
+  - **A. Realtime speech-to-speech** — OpenAI Realtime (`gpt-realtime`, `audio/pcmu`, semantic VAD with interruption); function calls execute our tools. Shapes verified against the `openai` npm package's GA realtime types.
+  - **B. Cascade** — OpenAI realtime *transcription* session (server VAD, `languages: [ar,en,fr]`, Lebanese prompt) → agent (streamed text) → sentence chunker → TTS (ElevenLabs `ulaw_8000`/`pcm_24000`, or OpenAI TTS with Lebanese-accent instructions). Barge-in: caller speech clears Twilio's buffer and aborts the in-flight LLM/TTS turn.
+  - **C. `<Gather>` fallback** — Twilio speech recognition (`ar-LB`) + `<Say>`: the phone path works with **only Twilio credentials**.
+  - **Browser text mode** — Chrome Web Speech API (`ar-LB` recognition + speech synthesis, client-side barge-in) with zero keys.
+- **Voice behaviour**: Lebanese greeting ("أهلا وسهلا، [clinic]، معك Maya. كيف فيني ساعدك؟"), max 3 spoken options, times spoken naturally ("الساعة أربعة ونص بعد الضهر"), **read-back confirmation before booking/moving** ("بأكّدلك ياه؟"), Arabic script for TTS even if STT returns Arabizi, prices spoken ("80 دولار"), no lists/emojis/URLs, confused twice → offer message/transfer, handoff → Twilio transfer to the staff number after the reply finishes playing, voicemail recording when the AI is unavailable.
+- **Routing**: `always`, `after_hours` (ring the business while open, AI otherwise) and `overflow` (ring staff N seconds, AI on no-answer) via `<Dial action>`; AI-blocked plans fall back to ringing the business / voicemail.
+- **Dashboard**: `/dashboard/calls` (list, outcome, duration, summary) and `/dashboard/calls/[id]` (transcript, summary, recording playback via authenticated proxy, linked appointment/customer, AI tool calls); `/dashboard/voice/test` browser call simulator (text mode free; audio mode streams 24 kHz PCM16 through the real pipeline when keys exist); voice settings in AI settings (Fekerte number, transfer number, answer mode, ring time, pipeline).
+- **Evals**: 10 voice scenarios through `VoiceCallSession` (read-back, decline, returning caller, reschedule, cancel, spoken prices, emergency, confusion → message, French, Arabizi STT → Arabic speech). **Mock: 46/46 total (36 chat + 10 voice).**
+- **Tests**: core 111 (adds µ-law/resampler, sentence chunker, speakable text, Twilio signatures/TwiML, voice tokens), voice server 5 (Twilio gather booking end-to-end, unknown number, health, browser WS token rejection + booking), e2e 11 (adds browser call simulator booking in Arabic → call log).
+
+### Manual live-call test checklist (needs Twilio + OpenAI and/or ElevenLabs keys)
+
+1. Deploy `apps/voice` with a public HTTPS URL; set `VOICE_PUBLIC_URL`, `TWILIO_*`, `OPENAI_API_KEY`, `ELEVENLABS_*`.
+2. Buy a Twilio number; set Voice webhook → `POST {VOICE_PUBLIC_URL}/twilio/voice`, status callback → `/twilio/status`. Put the number in Dashboard → AI receptionist → Voice → "Fekerte phone number".
+3. Call it from a Lebanese mobile. Check: greeting in Lebanese Arabic within ~1 s; say "بدي موعد تنظيف بكرا الصبح" → 2–3 times offered naturally; pick one, give a name, hear the read-back, say "إيه" → appointment on the calendar + WhatsApp confirmation.
+4. Barge-in: talk over the agent mid-sentence → it stops within ~300 ms and answers the new utterance.
+5. Code-switching: "Hi, badde ghayer my appointment la bukra" → understands, answers in Lebanese Arabic.
+6. Say "bade 7ake 7ada" / "I want a human" with a transfer number set → call is transferred after the agent's sentence.
+7. Mumble twice → offered to leave a message; accept → message appears in the inbox.
+8. `after_hours` and `overflow` modes: during opening hours the staff phone rings first; let it ring out → AI answers.
+9. Call log shows transcript, summary, outcome, recording playback; usage shows voice minutes.
+10. Measure latency (caller stops → first audio) for `realtime` vs `cascade`; target < 1.2 s. If cascade is slow, set `ANTHROPIC_MODEL` to a faster Claude model for the voice process and lower `VOICE_SILENCE_MS`.
+11. Kill the OpenAI key → pipeline falls back to `<Gather>`; call still works (robotic Polly voice).
+
 ## What's mocked / needs keys
 
 | Area | Now | To go live |
@@ -54,6 +83,9 @@ _Last updated: Phase 2 complete._
 | WhatsApp | `MockWhatsAppProvider` (console + DB) + simulator | `WHATSAPP_PROVIDER=meta` + Meta app (token, app secret, verify token, phone_number_id) + approved templates. Adapter written from Meta's documented shapes; **not exercised against the live Graph API** (developers.facebook.com was unreachable from this environment; Graph version defaults to v24.0 — verify) |
 | LLM | `MockLLMProvider` | `ANTHROPIC_API_KEY` (Claude, default `claude-opus-5-5`) or `LLM_PROVIDER=openai`. Request shape unit-tested against a stubbed SDK; not run live here |
 | STT (voice notes) | Mock (replies "please type") | `STT_PROVIDER=openai` + key (`gpt-4o-transcribe` default; untested live) |
+| Telephony | Twilio webhooks testable with unsigned POSTs in dev; browser simulator | Twilio account + number (`TWILIO_ACCOUNT_SID/AUTH_TOKEN`); a way to route the clinic's Lebanese number to it (carrier call-forwarding or a SIP trunk). **Untested against live Twilio** (twilio.com unreachable here) |
+| Realtime / streaming STT | Not active without keys (browser text mode / `<Gather>` instead) | `OPENAI_API_KEY` (Realtime GA shapes verified from SDK types; untested live) |
+| TTS | None (browser speech synthesis in simulator) | `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` (Lebanese/Levantine voice) or OpenAI TTS. **Untested live** (elevenlabs.io unreachable here) |
 | Email (magic links) | Printed to server log / shown in dev | Use `AUTH_PROVIDER=supabase` (Supabase sends emails) |
 | Rate limiting | In-memory per instance | Swap store for Redis/Upstash on multi-instance deploys (Phase 7) |
 
@@ -72,6 +104,10 @@ _Last updated: Phase 2 complete._
 - **WhatsApp profile name** is used as the customer's name when they have none on file.
 - **Arabizi replies use English service names** ("Checkup", "Teeth cleaning") — that's how Lebanese people text.
 - **Webhook processing**: inline via `after()` for speed (customers expect replies in seconds), with the job queue as the durable fallback.
+- **Voice pipelines degrade, never fail**: business preference → what keys allow → Twilio `<Gather>` (works with Twilio only). The browser simulator's free mode uses the browser's own speech engines.
+- **Read-back before booking on calls** (not on WhatsApp): mishearing is the main voice risk.
+- **Call outcome is derived from tool results**, not model self-report.
+- **Lebanese numbers**: Twilio may not sell +961 numbers; plan is call forwarding (always / on no-answer) from the clinic's existing line to a Twilio number, or a SIP trunk from a Lebanese carrier into Twilio Elastic SIP. Recorded as an open question for go-live.
 - Dashboard nav only shows sections that exist in the current build (`BUILT` set in `apps/web/src/lib/dashboard-data.ts`).
 
 ## Known issues / limitations
@@ -82,4 +118,4 @@ _Last updated: Phase 2 complete._
 
 ## Exact next step
 
-Phase 3: `apps/voice` (Fastify + WebSockets), Twilio Media Streams telephony adapter, realtime + cascade voice pipelines on the same agent/tools, browser call simulator, call logs, voice evals, voice-minute usage.
+Phase 4: plans/pricing in admin, feature gating + usage limits with overage, manual invoices (mark paid with reference/receipt), billing page for owners, 14-day trial → pause AI when unpaid.

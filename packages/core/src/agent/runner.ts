@@ -84,7 +84,9 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   const fallbackLang: ConversationLanguage = input.language ?? (business.defaultLanguage === "ar" ? "ar" : business.defaultLanguage);
   const detected = detectLanguage(input.userText, fallbackLang);
   // Very short replies ("1", "ok", "4:30") keep the conversation's language.
-  const language = input.userText.trim().length <= 6 && input.language ? input.language : detected.language;
+  let language = input.userText.trim().length <= 6 && input.language ? input.language : detected.language;
+  // Phone calls are spoken in Arabic script (TTS can't read Arabizi).
+  if (input.channel === "voice" && language === "arabizi") language = "ar";
 
   const phone = input.verifiedPhone ?? state.claimedPhone ?? null;
   const customer = phone

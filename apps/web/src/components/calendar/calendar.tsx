@@ -50,7 +50,9 @@ export function Calendar(props: CalendarProps) {
   const params = useSearchParams();
   const [, startTransition] = useTransition();
   const [appts, setAppts] = useState(props.appointments);
-  useEffect(() => setAppts(props.appointments), [props.appointments]);
+  useEffect(() => {
+    setAppts(props.appointments);
+  }, [props.appointments]);
 
   const [selected, setSelected] = useState<ApptDTO | null>(null);
   const [newDefaults, setNewDefaults] = useState<NewAppointmentDefaults | null>(null);

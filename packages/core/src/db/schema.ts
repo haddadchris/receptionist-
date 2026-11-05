@@ -543,6 +543,8 @@ export type AgentState = {
   focusAppointmentId?: string | null;
   /** A slot the customer picked, waiting for their name before booking. */
   pendingSlot?: OfferedSlot & { serviceId: string };
+  /** Voice: details read back to the caller, waiting for a yes before booking/moving. */
+  pendingConfirm?: OfferedSlot & { serviceId: string; intent: "book" | "reschedule"; name?: string | null };
   /** Appointments created in this conversation (web chat may only manage these). */
   createdAppointmentIds?: string[];
   /** Consecutive turns where the agent did not understand. */

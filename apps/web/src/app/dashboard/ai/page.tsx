@@ -40,6 +40,11 @@ export default async function AiPage() {
               whatsappAutoReply: b.aiSettings?.whatsappAutoReply !== false,
               whatsappNumber: b.whatsappNumber ?? "",
               whatsappPhoneNumberId: b.whatsappPhoneNumberId ?? "",
+              voicePipeline: b.aiSettings?.voicePipeline ?? "cascade",
+              voiceMode: b.aiSettings?.voiceMode ?? "always",
+              overflowRingSeconds: b.aiSettings?.overflowRingSeconds ?? 20,
+              transferNumber: b.aiSettings?.transferNumber ?? "",
+              voiceNumber: b.voiceNumber ?? "",
             }}
           />
           <WidgetSnippet snippet={snippet} />

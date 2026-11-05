@@ -35,6 +35,7 @@ async function main() {
   const report = await runEvals({
     provider,
     filter: filter ? (s) => s.id.includes(filter) : undefined,
+    idFilter: filter,
     onResult: (r) => {
       console.log(`${r.pass ? "✓" : "✗"} ${r.id.padEnd(42)} ${String(r.ms).padStart(6)}ms`);
       if (!r.pass) for (const f of r.failures) console.log(`    · ${f}`);

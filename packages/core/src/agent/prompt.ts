@@ -134,6 +134,7 @@ export function buildDynamicPrompt(ctx: {
     mem.push(`Customer's upcoming appointments: ` + st.appointments.map((a, i) => `${i + 1}) appointment_id=${a.id} ${a.serviceName} at ${a.start} with ${a.staffName}`).join("; "));
   }
   if (st.intent) mem.push(`Current goal: ${st.intent}.`);
+  if (st.pendingConfirm) mem.push(`You read back ${st.pendingConfirm.start} (staff_id=${st.pendingConfirm.staffId}) to the caller and are waiting for a yes before ${st.pendingConfirm.intent === "book" ? "create_booking" : "reschedule_booking"}.`);
   if (st.pendingSlot) mem.push(`Customer chose ${st.pendingSlot.start} (staff_id=${st.pendingSlot.staffId}); waiting for their name to book.`);
   if ((st.confusedCount ?? 0) >= 2) mem.push("You have misunderstood twice: offer take_message or handoff_to_human.");
   if (mem.length) lines.push("# Conversation memory", ...mem);

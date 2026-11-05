@@ -190,7 +190,7 @@ export async function runScenario(businessId: string, sc: Scenario, index: numbe
   return { id: sc.id, category: sc.category, language: sc.language, pass: failures.length === 0, failures, turns, ms: Date.now() - started };
 }
 
-export async function runEvals(opts: { provider?: LLMProvider; filter?: (s: Scenario) => boolean; onResult?: (r: ScenarioResult) => void } = {}) {
+export async function runEvals(opts: { provider?: LLMProvider; filter?: (s: Scenario) => boolean; onResult?: (r: ScenarioResult) => void; voice?: boolean; idFilter?: string } = {}) {
   const businessId = await createEvalBusiness();
   const list = SCENARIOS.filter(opts.filter ?? (() => true));
   const results: ScenarioResult[] = [];
@@ -203,6 +203,10 @@ export async function runEvals(opts: { provider?: LLMProvider; filter?: (s: Scen
     }
     results.push(r);
     opts.onResult?.(r);
+  }
+  if (opts.voice !== false) {
+    const { runVoiceEvals } = await import("./voice");
+    results.push(...(await runVoiceEvals(businessId, { provider: opts.provider, onResult: opts.onResult, filter: opts.idFilter ? (s) => s.id.includes(opts.idFilter!) : undefined })));
   }
   const passed = results.filter((r) => r.pass).length;
   return { businessId, results, passed, total: results.length, passRate: results.length ? passed / results.length : 0 };

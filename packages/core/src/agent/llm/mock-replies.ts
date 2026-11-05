@@ -9,6 +9,29 @@ const pick = <T>(l: L, v: Record<L, T>): T => v[l];
 const first = (name: string | null) => (name ? name.split(" ")[0] : "");
 
 export const R = {
+  offerVoice: (l: L, service: string, whens: string[], dayFull: boolean) => {
+    const joined = whens.join(l === "ar" ? "، أو " : l === "fr" ? ", ou " : ", or ");
+    return pick(l, {
+      ar: `${dayFull ? "للأسف هاليوم مفوّل. " : ""}عنا لـ ${service}: ${joined}. أيّا بيناسبك؟`,
+      arabizi: `${dayFull ? "Lal2asaf hayda el yom mfawwal. " : ""}3anna la ${service}: ${joined}. Ayya bi nesbak?`,
+      en: `${dayFull ? "Sorry, that day is full. " : ""}For ${service} I have ${joined}. Which works for you?`,
+      fr: `${dayFull ? "Désolée, ce jour est complet. " : ""}Pour ${service}, j'ai ${joined}. Lequel vous convient ?`,
+    });
+  },
+  confirmVoice: (l: L, service: string, when: string, staff: string, name: string | null) =>
+    pick(l, {
+      ar: `تمام${name ? ` ${first(name)}` : ""}، يعني ${service} ${when} مع ${staff}. بأكّدلك ياه؟`,
+      arabizi: `Tamem${name ? ` ${first(name)}` : ""}, ya3ne ${service} ${when} ma3 ${staff}. B2akkedlak ya2o?`,
+      en: `Great${name ? `, ${first(name)}` : ""}. So that's ${service} ${when} with ${staff}. Shall I book it?`,
+      fr: `Parfait${name ? ` ${first(name)}` : ""}. Donc ${service} ${when} avec ${staff}. Je confirme ?`,
+    }),
+  askOtherTime: (l: L) =>
+    pick(l, {
+      ar: "ولا يهمك. أي يوم أو ساعة بتفضّل؟",
+      arabizi: "Wala yhemmak. Ayya yom aw sa3a btfaddel?",
+      en: "No problem. Which day or time would you prefer?",
+      fr: "Pas de souci. Quel jour ou quelle heure préférez-vous ?",
+    }),
   greet: (l: L, persona: string, business: string, name: string | null) =>
     pick(l, {
       ar: name ? `أهلا ${first(name)} 👋 معك ${persona} من ${business}. كيف فيني ساعدك اليوم؟` : `أهلا وسهلا 👋 معك ${persona} من ${business}. كيف فيني ساعدك؟`,

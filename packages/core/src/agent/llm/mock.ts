@@ -11,6 +11,7 @@ import { DateTime } from "luxon";
 import type { LLMProvider, LLMRequest, LLMResponse, ToolCall, ToolResult } from "./types";
 import { matchService, parseCatalog, parseDate, parseFlags, parseName, parseOption, parsePartOfDay, parseTime, type Flags } from "./nlu";
 import { R } from "./mock-replies";
+import { spokenDateTime } from "../../lib/spoken";
 
 let seq = 0;
 const call = (name: string, input: Record<string, unknown>): ToolCall => ({ id: `mock_${++seq}`, name, input });
@@ -107,12 +108,33 @@ export class MockLLMProvider implements LLMProvider {
     if (f.injection) return reply(R.injection(l));
     if (f.medical && !f.book) return reply(R.medical(l));
 
-    // 2. Picking one of the offered times / appointments.
+    // 2. Voice: waiting for a yes on details we read back.
+    if (st.pendingConfirm) {
+      const pc = st.pendingConfirm;
+      if (f.yes && !f.no) {
+        st.pendingConfirm = undefined;
+        if (pc.intent === "reschedule" && st.focusAppointmentId) {
+          return tool("reschedule_booking", { appointment_id: st.focusAppointmentId, new_start: pc.start, ...(pc.staffId ? { staff_id: pc.staffId } : {}) });
+        }
+        return tool("create_booking", { service_id: pc.serviceId, start: pc.start, ...(pc.staffId ? { staff_id: pc.staffId } : {}), ...(pc.name ? { customer_name: pc.name } : {}) });
+      }
+      if (f.no) {
+        st.pendingConfirm = undefined;
+        return reply(R.askOtherTime(l));
+      }
+    }
+
+    // 3. Picking one of the offered times / appointments.
     if (st.pendingSlot) {
       const phone = text.match(/(\+?\d[\d\s-]{6,16}\d)/)?.[1];
       const name = parseName(text.replace(phone ?? "", " ").trim(), true) ?? c.customerName ?? st.customerName ?? null;
       if (phone || name) {
         if (name) st.customerName = name;
+        if (c.channel === "voice" && name) {
+          const ps = st.pendingSlot;
+          st.pendingSlot = undefined;
+          return this.confirmVoice(req, { ...ps, intent: "book", name });
+        }
         const input: Record<string, unknown> = { service_id: st.pendingSlot.serviceId, start: st.pendingSlot.start };
         if (st.pendingSlot.staffId) input.staff_id = st.pendingSlot.staffId;
         if (name) input.customer_name = name;
@@ -147,6 +169,7 @@ export class MockLLMProvider implements LLMProvider {
       }
       if (chosen) {
         if (st.intent === "reschedule" && st.focusAppointmentId) {
+          if (c.channel === "voice") return this.confirmVoice(req, { ...chosen, serviceId: st.offer.serviceId, intent: "reschedule" });
           return tool("reschedule_booking", { appointment_id: st.focusAppointmentId, new_start: chosen.start, staff_id: chosen.staffId });
         }
         const name = c.customerName ?? st.customerName ?? parseName(text, false);
@@ -154,6 +177,7 @@ export class MockLLMProvider implements LLMProvider {
           st.pendingSlot = { ...chosen, serviceId: st.offer.serviceId };
           return reply(R.askName(l));
         }
+        if (c.channel === "voice") return this.confirmVoice(req, { ...chosen, serviceId: st.offer.serviceId, intent: "book", name });
         return tool("create_booking", { service_id: st.offer.serviceId, start: chosen.start, staff_id: chosen.staffId, customer_name: name });
       }
     }
@@ -208,6 +232,15 @@ export class MockLLMProvider implements LLMProvider {
     return reply(R.confused(l));
   }
 
+  /** Voice: read the details back and wait for a yes. */
+  private confirmVoice(req: LLMRequest, pc: NonNullable<LLMRequest["context"]["state"]["pendingConfirm"]>): LLMResponse {
+    const c = req.context;
+    c.state.pendingConfirm = pc;
+    const when = spokenDateTime(DateTime.fromISO(pc.start, { zone: c.timezone }).toJSDate(), c.timezone, c.language, new Date(c.now));
+    const service = c.state.offer?.serviceName ?? "";
+    return reply(R.confirmVoice(c.language, service, when, pc.staffName, pc.name ?? c.customerName ?? null));
+  }
+
   private localName(names: string[], l: string): string {
     // Catalog order is en | ar | fr (see prompt.ts); pick by script.
     if (l === "ar") return names.find((n) => /[؀-ۿ]/.test(n)) ?? names[0] ?? "";
@@ -238,6 +271,11 @@ export class MockLLMProvider implements LLMProvider {
             a.slots = [exact, ...a.slots.filter((s) => s !== exact)].map((s, i) => ({ ...s, option: i + 1 }));
             st.offer = st.offer ? { ...st.offer, slots: a.slots.map((s) => ({ start: s.start, staffId: s.staff_id, staffName: s.staff_name })) } : st.offer;
           }
+        }
+        if (c.channel === "voice") {
+          const three = a.slots.slice(0, 3);
+          if (st.offer) st.offer = { ...st.offer, slots: three.map((s) => ({ start: s.start, staffId: s.staff_id, staffName: s.staff_name })) };
+          return reply(R.offerVoice(l, a.service, three.map((s) => s.when), a.requested_date_full));
         }
         return reply(R.offer(l, a.service, a.slots, a.requested_date_full));
       }
